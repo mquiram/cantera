@@ -363,7 +363,7 @@ public:
         }
         return false;
     }
-   
+
 
     double nElectron() const {
         compute_nDensity();

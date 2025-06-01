@@ -2,7 +2,7 @@
 Nanosecond Pulse Plasma Simulation
 ==================================
 
-This example simulates a nanosecond-scale pulse discharge in a reactor. 
+This example simulates a nanosecond-scale pulse discharge in a reactor.
 A Gaussian-shaped electric field pulse is applied over a short timescale.
 
 Requires: cantera >= 3.0, matplotlib >= 2.0
@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 # Gaussian pulse parameters
 EN_peak = 190 * 1e-21  # Td
-pulse_center = 24e-9   
+pulse_center = 24e-9
 pulse_width = 3e-9    # standard deviation in ns
 
 def gaussian_EN(t):
@@ -55,7 +55,7 @@ while t < t_total:
         states.append(r.thermo.state, t=sim.time)
         print('{:10.3e} {:10.3f} {:10.3f} {:14.6f}'.format(
             sim.time, r.T, r.thermo.P, r.thermo.u))
-    
+
     EN_t = gaussian_EN(t)
     gas.EN = EN_t
     gas.update_EEDF()
