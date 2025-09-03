@@ -63,6 +63,9 @@ class ElectronCollisionPlasmaRate;
 class PlasmaPhase: public IdealGasPhase
 {
 public:
+    // NEW: temporarily force Te == T during equilibrium solves
+    void setLockTeToT(bool v) { m_lockTeToT = v; }
+    bool lockTeToT() const { return m_lockTeToT; }
     //! Construct and initialize a PlasmaPhase object
     //! directly from an input file. The constructor initializes the electron
     //! energy distribution to be Druyvesteyn distribution (m_x = 2.0). The initial
@@ -179,7 +182,8 @@ public:
     //! Electron Temperature (K)
     //!     @return The electron temperature of the phase
     double electronTemperature() const override {
-        return m_electronTemp;
+        //return m_electronTemp;
+        return m_lockTeToT ? temperature() : m_electronTemp;
     }
 
     //! Return the Gas Constant multiplied by the current electron temperature
@@ -626,6 +630,9 @@ protected:
     void updateElasticElectronEnergyLossCoefficients();
 
 private:
+
+    // NEW: lock flag (default off)
+    bool m_lockTeToT = false;
 
     //! pointer to EEDF solver
     unique_ptr<EEDFTwoTermApproximation> ptrEEDFSolver = nullptr;

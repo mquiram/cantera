@@ -531,7 +531,10 @@ void Reaction::setEquation(const string& equation, const Kinetics* kin)
 string Reaction::type() const
 {
     if (!m_rate) {
-        throw CanteraError("Reaction::type", "Empty Reaction does not have a type");
+        throw InputFileError("Reaction::type", input,
+        "Reaction has no rate object.\n"
+        "Check YAML near this line for missing or unrecognized 'rate-constant', 'type', or other fields.\n"
+        "Reaction entry: '{}'", equation());
     }
 
     string rate_type = m_rate->type();

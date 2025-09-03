@@ -545,8 +545,8 @@ void EEDFTwoTermApproximation::checkSpeciesNoCrossSection()
     // warn that a specific species needs cross-section data.
     for (size_t k : m_kOthers) {
         if (m_phase->moleFraction(k) > options.m_moleFractionThreshold) {
-            writelog("EEDFTwoTermApproximation:checkSpeciesNoCrossSection\n");
-            writelog("Warning:The mole fraction of species {} is more than 0.01 (X = {:.3g}) but it has no cross-section data\n", m_phase->speciesName(k), m_phase->moleFraction(k));
+            //writelog("EEDFTwoTermApproximation:checkSpeciesNoCrossSection\n");
+            //writelog("Warning:The mole fraction of species {} is more than 0.01 (X = {:.3g}) but it has no cross-section data\n", m_phase->speciesName(k), m_phase->moleFraction(k));
         }
     }
 }
