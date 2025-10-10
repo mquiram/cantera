@@ -58,6 +58,27 @@ class PSR_Plasma2:
         # Reactor network
         self.sim = ct.ReactorNet([self.reactor])
 
+    """ def disable_two_temp_plasma_reactions(gas, verbose=True):
+        kin = gas.kinetics
+        n_disabled = 0
+        for i, rxn in enumerate(kin.reactions()):
+            rtype = getattr(rxn, "reaction_type", "")
+            # robust fallback if reaction_type is missing:
+            rate = getattr(rxn, "rate", None)
+            is_two_temp = (rtype == "two-temperature-plasma") or \
+                        (rate is not None and rate.__class__.__name__.lower().startswith("twotemp"))
+            if is_two_temp:
+                kin.set_multiplier(0.0, i)
+                n_disabled += 1
+                if verbose:
+                    try:
+                        eqn = rxn.equation
+                    except Exception:
+                        eqn = "<equation unavailable>"
+                    print(f"disabled [{i:03d}] {rtype:>24s} : {eqn}")
+        if verbose:
+            print(f"Total disabled two-temp-plasma reactions: {n_disabled}") """
+
     def run(self, t_end, dt=1e-5, dt_EN=1e-5):
         """
         Run the PSR to t_end [s], updating EN at every dt_EN.

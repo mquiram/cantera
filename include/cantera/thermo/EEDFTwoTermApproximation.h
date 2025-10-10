@@ -87,6 +87,9 @@ public:
         return m_electronMobility;
     }
 
+    double electronMobility() const;          // [m^2 / V / s]
+    double electronDiffusion() const;         // [m^2 / s]
+
 protected:
     /**
      * Prepare for EEDF calculations.
@@ -261,6 +264,9 @@ protected:
     bool m_first_call;
 
 private:
+
+    double m_mu_e = std::numeric_limits<double>::quiet_NaN();
+    double m_De   = std::numeric_limits<double>::quiet_NaN();
 
 
 

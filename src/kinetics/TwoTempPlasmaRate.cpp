@@ -12,15 +12,17 @@ namespace Cantera
 
 bool TwoTempPlasmaData::update(const ThermoPhase& phase, const Kinetics& kin)
 {
-    double T = phase.temperature();
+    double T  = phase.temperature();
     double Te = phase.electronTemperature();
+
     bool changed = false;
     if (T != temperature) {
-        ReactionData::update(T);
+        double T_safe = (std::isfinite(T) && T > 1e-6) ? T : 300.0;
+        ReactionData::update(T_safe);
         changed = true;
     }
     if (Te != electronTemp) {
-        updateTe(Te);
+        updateTe(Te); // you already floor Te inside updateTe()
         changed = true;
     }
     return changed;
@@ -40,9 +42,11 @@ void TwoTempPlasmaData::update(double T, double Te)
 
 void TwoTempPlasmaData::updateTe(double Te)
 {
-    electronTemp = Te;
-    logTe = std::log(Te);
-    recipTe = 1./Te;
+    // Floor and sanitize Te before using it anywhere
+    double Te_safe = std::isfinite(Te) ? std::max(Te, 30.0) : 300.0; // K
+    electronTemp = Te_safe;
+    logTe = std::log(Te_safe);
+    recipTe = 1.0 / Te_safe;
 }
 
 TwoTempPlasmaRate::TwoTempPlasmaRate()

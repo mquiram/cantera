@@ -141,8 +141,22 @@ double ElectronCollisionPlasmaRate::evalFromStruct(
     );
 
     // unit in kmol/m3/s
-    return pow(2.0 * ElectronCharge / ElectronMass, 0.5) * Avogadro *
-           simpson(eps.cwiseProduct(distribution.cwiseProduct(cs_array)), eps);
+    /* return pow(2.0 * ElectronCharge / ElectronMass, 0.5) * Avogadro *
+           simpson(eps.cwiseProduct(distribution.cwiseProduct(cs_array)), eps); */
+    // unit in kmol/m3/s
+    Eigen::ArrayXd integrand =
+        eps.cwiseProduct(distribution.cwiseProduct(cs_array));
+
+    for (Eigen::Index i = 0; i < integrand.size(); ++i) {
+        if (!std::isfinite(integrand[i])) {
+            integrand[i] = 0.0; // zero-out any poison values
+        } else if (integrand[i] < 0.0) {
+            integrand[i] = 0.0; // keep non-negative
+        }
+    }
+
+    return std::sqrt(2.0 * ElectronCharge / ElectronMass) * Avogadro
+        * simpson(integrand, eps);
 }
 
 void ElectronCollisionPlasmaRate::modifyRateConstants(
@@ -186,7 +200,7 @@ void ElectronCollisionPlasmaRate::modifyRateConstants(
         }
     }
 
-    // Map energyLevels in Eigen::ArrayXd
+    /* // Map energyLevels in Eigen::ArrayXd
     auto eps = Eigen::Map<const Eigen::ArrayXd>(
         shared_data.energyLevels.data(), shared_data.energyLevels.size()
     );
@@ -199,7 +213,37 @@ void ElectronCollisionPlasmaRate::modifyRateConstants(
     // unit in kmol/m3/s
     kr = pow(2.0 * ElectronCharge / ElectronMass, 0.5) * Avogadro *
          simpson((eps + m_energyLevels[0]).cwiseProduct(
-         distribution.cwiseProduct(m_crossSectionsOffset)), eps);
+         distribution.cwiseProduct(m_crossSectionsOffset)), eps); */
+    // Map energyLevels in Eigen::ArrayXd
+    auto eps = Eigen::Map<const Eigen::ArrayXd>(
+        shared_data.energyLevels.data(), shared_data.energyLevels.size()
+    );
+
+    // Map distribution
+    auto distribution = Eigen::Map<const Eigen::ArrayXd>(
+        shared_data.distribution.data(), shared_data.distribution.size()
+    );
+
+    // unit in kmol/m3/s
+    Eigen::ArrayXd integrand = (eps + m_energyLevels[0])
+        .cwiseProduct(distribution.cwiseProduct(
+            Eigen::Map<const Eigen::ArrayXd>(m_crossSectionsOffset.data(),
+                                            m_crossSectionsOffset.size())));
+
+    // Sanitize integrand
+    for (Eigen::Index i = 0; i < integrand.size(); ++i) {
+        double& v = integrand[i];
+        if (!std::isfinite(v) || v < 0.0) v = 0.0;
+    }
+
+    // Also guard the abscissa
+    Eigen::ArrayXd eps_safe = eps;
+    for (Eigen::Index i = 0; i < eps_safe.size(); ++i) {
+        if (!std::isfinite(eps_safe[i]) || eps_safe[i] < 0.0) eps_safe[i] = 0.0;
+    }
+
+    kr = std::sqrt(2.0 * ElectronCharge / ElectronMass) * Avogadro
+        * simpson(integrand, eps_safe);
 }
 
 void ElectronCollisionPlasmaRate::setContext(const Reaction& rxn, const Kinetics& kin)

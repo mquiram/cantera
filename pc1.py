@@ -9,6 +9,7 @@ import time
 from functools import reduce
 import sys
 import matplotlib.pyplot as plt
+ct.CanteraError.set_stack_trace_depth(10)
 
 class PlasmaParameters:
     """
@@ -208,7 +209,7 @@ def CombustorPZ(Params, gas):
     # Unpack parameters
     PZ_volume       = Params.PZ_volume
     PZ_tsim         = Params.PZ_tsim
-    P0              = Params.P0
+    P0              = Params.P0 #3101325
     T0              = Params.T0
     PZ_n_reactor    = Params.PZ_n_reactor
     PZ_k_pressure   = Params.PZ_k_pressure
@@ -275,11 +276,11 @@ def CombustorPZ(Params, gas):
         g_feed.HP = h_after, P0            # energy-corrected inlet; DO NOT equilibrate
 
         # --- REACTOR INITIAL CONDITION (burned, neutral HP eq) ---
-        g0 = ct.Solution(Params.RM, transport_model='None')       # same mech you’re testing right now
+        g0 = ct.Solution(Params.RM, transport_model='None')
         g0.TP = T0, P0
         g0.set_equivalence_ratio(Params.PZ_phi_lst[i], Params.fuelStr, Params.Oxidizer)
         g0.HP = h_after, P0
-        #g0.equilibrate('HP')
+        g0.equilibrate('HP')
         # -----------------------------------------------------------------------
 
         # (log ICs AFTER setting HP so T/h reflect the energy-corrected inlet)
@@ -288,7 +289,7 @@ def CombustorPZ(Params, gas):
             "phi":      float(Params.PZ_phi_lst[i]),
             "V":        float(Params.PZ_V_lst[i]),
             "mdot_in":  float(mdot_in_i),
-            "T":        float(gas_i.T),
+            "T":        float(g0.T),
             "P":        float(P0),
             "h":        float(gas_i.enthalpy_mass),
         })
@@ -337,13 +338,68 @@ def CombustorPZ(Params, gas):
         t_end_i = max(min(k_tau * tau_geom, tmax), tmin)
 
         # (optional) keep backward-compat feel: ensure at least old PZ_tsim
-        t_end_i = max(t_end_i, float(Params.PZ_tsim))
+        #t_end_i = max(t_end_i, float(Params.PZ_tsim))
+        t_end_i = Params.PZ_tsim
 
         if Params.debug:
             print(f"[PZ{i+1:02d}] τ_geom={tau_geom:.4e} s | k={k_tau:g} → t_end_i={t_end_i:.4e} s "
                 f"(V={V_i:.3e} m^3, mdot_for_tau={mdot_for_tau:.3e} kg/s)")
 
         # Integrate
+        #state = reactor.run(t_end=t_end_i, dt=1e-5, dt_EN=1e-5)
+        Params.skip_r1 = False
+        skip_this = getattr(Params, "skip_r1", False) and (i == 0)
+
+        if skip_this:
+            # choose what to pass downstream:
+            # - use g0 (HP-equilibrated, “burned” guess), or
+            # - use g_feed (fresh premix, no plasma) — pick one.
+            gas_out = ct.Solution(Params.RM, transport_model='None')
+            # keep the energy reference consistent
+            gas_out.HP = h_after, P0
+            gas_out.X  = g0.X  # or g_feed.X if you want “no-burn” pass-through
+
+            # geometric residence time estimate: τ = ρ * V / ṁ
+            rho_out = gas_out.density
+            tres = rho_out * Params.PZ_V_lst[i] / Params.PZ_mdot_in_lst[i]
+            Params.PZ_tres_lst.append(tres)
+
+            # stash a lightweight “state” so the printer shows sane numbers
+            Params.PZ_states.append(
+                SimpleNamespace(T=float(gas_out.T), P=float(gas_out.P), X=gas_out.X)
+            )
+
+            # build the stream for mass-averaging the PZ exit
+            streamQuantity = ct.Quantity(gas_out, constant='HP')
+            streamQuantity.mass = Params.PZ_mdot_in_lst[i]
+            streamQuantityList.append(streamQuantity)
+
+            # also keep a handle to something thermodynamic-looking for downstream
+            Params.PZ_exitStream.append(gas_out)
+
+            # nothing else in this iteration needs the real PSR, so skip to next reactor
+            continue
+        else:
+            state = reactor.run(t_end=t_end_i, dt=1e-5, dt_EN=1e-5)
+
+            # Integrate until steady state
+            #state = reactor.run(t_end=PZ_tsim, dt=1e-5, dt_EN=1e-5)  # Can adapt dt if needed
+            rho_out = reactor.reactor.thermo.density
+            tres = rho_out * Params.PZ_V_lst[i] / Params.PZ_mdot_in_lst[i]
+            Params.PZ_tres_lst.append(tres)
+
+            # Store results
+
+            Params.PZ_states.append(state)
+            Params.PZ_exitStream.append(reactor.reactor.thermo)
+            gas_i.HPX = reactor.reactor.thermo.enthalpy_mass, P0, reactor.reactor.thermo.X
+            streamQuantity = ct.Quantity(gas_i, constant='HP')
+            streamQuantity.mass = Params.PZ_mdot_in_lst[i]
+            streamQuantityList.append(streamQuantity)
+
+        #Params.PZ_states.append(state_thermo)  # scalar properties, handled by your print helper
+
+        """ # Integrate
         state = reactor.run(t_end=t_end_i, dt=1e-5, dt_EN=1e-5)
 
         # Integrate until steady state
@@ -359,9 +415,7 @@ def CombustorPZ(Params, gas):
         gas_i.HPX = reactor.reactor.thermo.enthalpy_mass, P0, reactor.reactor.thermo.X
         streamQuantity = ct.Quantity(gas_i, constant='HP')
         streamQuantity.mass = Params.PZ_mdot_in_lst[i]
-        streamQuantityList.append(streamQuantity)
-
-        #Params.PZ_states.append(state_thermo)  # scalar properties, handled by your print helper
+        streamQuantityList.append(streamQuantity) """
 
         # Residence time to match original definition: tau = rho * V / mdot
         """ rho_out = state_thermo.density
@@ -476,8 +530,16 @@ def CombustorSZ(Params, gas, air):
 
         solver_SZ.set_f_params(ODEParams)
 
+        try:
+            dydx0 = ode_SZ(0.0, y0, ODEParams)
+            if not isinstance(dydx0, np.ndarray) or dydx0.shape != y0.shape or not np.all(np.isfinite(dydx0)):
+                raise FloatingPointError("RHS probe returned bad/Non-finite dydx")
+        except Exception as ex:
+            print("[SZ] RHS probe failed before integrating:", ex)
+            raise
+
         ### Run solver (Note that solver_SZ.t refers to the spatial dimension for the PFR (t = distance))
-        while solver_SZ.t < SZ_length: #solver_SZ.successful() and solver_SZ.t < SZ_length:
+        """ while solver_SZ.t < SZ_length: #solver_SZ.successful() and solver_SZ.t < SZ_length:
             solver_SZ.integrate(solver_SZ.t + dx_SZ)
 
             gas.TPY = solver_SZ.y[1],P0,solver_SZ.y[2:]
@@ -498,7 +560,62 @@ def CombustorSZ(Params, gas, air):
             #print('Solver x = ', solver_SZ.t)
             #print('States x = ', states_SZ.x_SZ[-1])
             #print('phi =      ', ODEParams.phi)
-            #print('mdot =     ', states_SZ.M_SZ[-1])
+            #print('mdot =     ', states_SZ.M_SZ[-1]) """
+
+        #
+        max_halves   = 12          # up to 2^-12 of your dx_SZ
+        min_progress = 1e-14       # avoid "t + h == t" stalling
+        t_final      = SZ_length - 1e-12
+
+        while solver_SZ.t < t_final:
+            t0 = float(solver_SZ.t)
+            y0 = solver_SZ.y.copy()
+            dx = float(dx_SZ)
+            accepted = False
+
+            for _ in range(max_halves + 1):
+                try:
+                    solver_SZ.integrate(t0 + dx)
+
+                    # 1)
+                    if (not solver_SZ.successful()) or not (solver_SZ.t > t0 + min_progress):
+                        raise FloatingPointError("no time advance or unsuccessful step")
+
+                    # 2)
+                    y = solver_SZ.y
+                    if (y is None) or (len(y) != 2 + gas.n_species) or (not np.all(np.isfinite(y))):
+                        raise FloatingPointError("non-finite/invalid state after step")
+
+                    #
+                    accepted = True
+                    break
+
+                except Exception as ex:
+                    # restore and backtrack
+                    solver_SZ.set_initial_value(y0, t0)
+                    dx *= 0.5
+                    if dx < 1e-12:
+                        print(f"[SZ] backtrack floor at x={t0:.6e} m: {ex}")
+                        accepted = False
+                        break
+
+            if not accepted:
+                print("[SZ] Ending this SZ segment early (couldn't find an acceptable step).")
+                break
+
+
+            y = solver_SZ.y
+            # assign composition with a contiguous copy (no normalization or edits)
+            gas.TPY = float(y[1]), P0, np.array(y[2:], dtype=float, copy=True)
+
+            # Append state (unchanged math)
+            states_SZ.append(
+                gas.state,
+                x_SZ=solver_SZ.t,
+                t_SZ=solver_SZ.t / ((solver_SZ.y[0]) / (gas.density * SZ_A)),
+                u_SZ=(solver_SZ.y[0]) / (gas.density * SZ_A),
+                M_SZ=solver_SZ.y[0],
+            )
 
         ### Write outputs of SZ in specified format [T, p, rho, X, mdot]
         Results_SZ = [float(states_SZ[-1].T),
@@ -800,16 +917,19 @@ def run(printResults):
 
     # Initialize diluent air (secondary zone air)
     Params.dil_air.TPX = Params.T_air, Params.P_air, Params.Oxidizer
-
+    #print("print 0")
     # --- Primary Zone ---
     PZ_results = CombustorPZ(Params, Params.gas)
     print_pz_diagnostics(Params, top_n=25)
+    #print("1...")
 
     # Optional use of PZ output to update parameters (e.g., thermal diffusivity or flame radius scaling)
     R = PZ_results[-1]  # This could be cp_mass - cv_mass, or used to estimate diffusivity
+    #print("2...")
 
     # --- Secondary Zone ---
     SZ_exitStream = CombustorSZ(Params, Params.gas, Params.dil_air)
+    #print("3...")
 
     # --- Emissions Calculation ---
     NOx = 1000 * (
@@ -817,13 +937,21 @@ def run(printResults):
         SZ_exitStream.Y[SZ_exitStream.species_index('NO2')]
     ) * SZ_exitStream.mass
 
+    #print("4...")
+
     CO = 1000 * SZ_exitStream.Y[SZ_exitStream.species_index('CO')] * SZ_exitStream.mass
+
+    #print("5...")
 
     # Emission Indices (mass-based emissions per unit fuel mass)
     EI_NOx = NOx / (Params.mdot_fuel / Params.fuel_scaler)
     EI_CO  = CO / (Params.mdot_fuel / Params.fuel_scaler)
 
+    #print("6...")
+
     if printResults == 1:
         CombUtils.print_results()
+
+    #print("7...")
 
     return Params, PZ_results, SZ_exitStream, EI_NOx, EI_CO, NOx, CO

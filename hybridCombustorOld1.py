@@ -275,7 +275,7 @@ def CombustorPZ(Params, gas):
         g_feed.HP = h_after, P0            # energy-corrected inlet; DO NOT equilibrate
 
         # --- REACTOR INITIAL CONDITION (burned, neutral HP eq) ---
-        g0 = ct.Solution(Params.RM, transport_model='None')       # same mech you’re testing right now
+        g0 = ct.Solution(Params.RM, transport_model='None')
         g0.TP = T0, P0
         g0.set_equivalence_ratio(Params.PZ_phi_lst[i], Params.fuelStr, Params.Oxidizer)
         g0.HP = h_after, P0

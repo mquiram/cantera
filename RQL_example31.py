@@ -37,9 +37,15 @@ Tt4 = NPSS_data['T04[R]'].values[0::k] * 100 / 180  # Convert Rankine to Kelvin
 # -----------------------------------------------
 # Set up combustor chemistry and geometry
 # -----------------------------------------------
-Combustor.setChem(
-    RM='nDodecane_ReitzNO.yaml',              # Use n-Dodecane plasma mechanism
+""" Combustor.setChem(
+    RM='nDodecane_ReitzNO_plasma.yaml',              # Use n-Dodecane plasma mechanism
     Fuel='c12h26',                         # Fuel species
+    Oxidizer='O2:0.2078, N2:0.782, H2O:0.0101'  # Air composition (wet)
+) """
+
+Combustor.setChem(
+    RM='A2NOx_hitest.yaml',              # Use n-Dodecane plasma mechanism
+    Fuel='POSF10325',                         # Fuel species
     Oxidizer='O2:0.2078, N2:0.782, H2O:0.0101'  # Air composition (wet)
 )
 

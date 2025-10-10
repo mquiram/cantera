@@ -9,6 +9,7 @@
 #include "cantera/kinetics/Kinetics.h"
 #include "cantera/thermo/ThermoPhase.h"
 #include "cantera/base/utilities.h"
+#include "cantera/thermo/PlasmaPhase.h"
 
 namespace Cantera
 {
@@ -92,6 +93,48 @@ void IdealGasConstPressureReactor::eval(double time, double* LHS, double* RHS)
 
     // external heat transfer
     mcpdTdt += m_Qdot;
+    // --- ADD: plasma power terms (heavy-gas heating) ---
+    if (m_energy && m_vol > 0) {
+        if (const auto* plasma = dynamic_cast<const PlasmaPhase*>(m_thermo)) {
+            const double qJ = plasma->jouleHeatingPower_noexcept();  // W/m^3
+            const double qE = plasma->elasticPowerLoss_noexcept();   // W/m^3
+            const double q_total = qJ + qE;
+            if (std::isfinite(q_total) && q_total != 0.0) {
+                mcpdTdt += q_total * m_vol; // [W/m^3]*[m^3] = W → into m*cp*dT/dt (works for CV and CP)
+            }
+        }
+    }
+    /* if (auto* plasma = dynamic_cast<PlasmaPhase*>(m_thermo)) {
+        const double u_e = plasma->electronMobility();             // [m^2/(V·s)]
+        const double q_j = plasma->jouleHeatingPower_noexcept();   // [W/m^3]
+        const double q_e = plasma->elasticPowerLoss_noexcept();    // [W/m^3]
+        const double mQ  = (q_j + q_e) * m_vol;                    // total power [W]
+        const double cp  = m_thermo->cp_mass();                    // J/(kg·K)
+        const double rho = m_thermo->density();                    // kg/m^3
+        const double mcp = rho * cp * m_vol;                       // [J/K]
+        const double mcpdTdt_pred = mQ;                            // since Q = mcp * dT/dt
+
+        writelog("=== PLASMA DEBUG ===\n");
+        writelog(fmt::format("u_e      = {:g}  [m^2/(V·s)]\n", u_e));
+        writelog(fmt::format("q_j      = {:g}  [W/m^3]\n", q_j));
+        writelog(fmt::format("q_e      = {:g}  [W/m^3]\n", q_e));
+        writelog(fmt::format("m_Qdot   = {:g}  [W]\n", mQ));
+        writelog(fmt::format("mcpdTdt  = {:g}  [W] (should match m_Qdot if balanced)\n", mcpdTdt_pred));
+        writelog("====================\n");
+    } */
+
+    // --- ADD: plasma power terms (heavy-gas heating) ---
+/*     if (auto* plasma = dynamic_cast<PlasmaPhase*>(m_thermo)) {
+        // Volumetric Joule heating (σE^2) and elastic e→gas transfer (both are W/m^3)
+        const double qJ       = plasma->jouleHeatingPower();
+        const double qElastic = plasma->elasticPowerLoss();
+
+        // Convert to total power (multiply by volume) and add as *heating* (positive)
+        const double q_total = (qJ + qElastic) * m_vol;
+        if (std::isfinite(q_total)) {
+            mcpdTdt += q_total;
+        }
+    } */
 
     for (size_t n = 0; n < m_nsp; n++) {
         // heat release from gas phase and surface reactions

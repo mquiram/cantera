@@ -62,11 +62,48 @@ PlasmaPhase::~PlasmaPhase()
     }
 }
 
-void PlasmaPhase::setTemperature(const double temp)
+/* void PlasmaPhase::setTemperature(const double temp)
 {
     Phase::setTemperature(temp);
     m_kT = Boltzmann * temp / ElectronCharge;
 }
+ */
+
+void PlasmaPhase::setTemperature(const double temp)
+{
+    // Sanitize proposed temperature to avoid Base::setTemperature throws
+    double T_safe = (std::isfinite(temp) && temp > 1e-6) ? temp : 300.0; // K
+    Phase::setTemperature(T_safe);
+    m_kT = Boltzmann * T_safe / ElectronCharge;
+}
+
+/* void PlasmaPhase::setTemperature(const double temp)
+{
+    double Tprop = std::isfinite(temp) ? temp : m_Tmin;
+
+    // Absolute floor to keep thermo/Keq well-behaved
+    if (Tprop < m_Tmin) {
+        Tprop = m_Tmin;
+    }
+
+    // Per-call drop cap to keep CVODE trial states from plunging
+    if (m_limit_dT) {
+        // initialize m_prev_T on first use if needed
+        if (!(m_prev_T > 0.0) || !std::isfinite(m_prev_T)) {
+            m_prev_T = std::max(Tprop, m_Tmin);
+        }
+        const double Tmin_cap = std::max(m_Tmin, m_prev_T - m_dTcap_down);
+        if (Tprop < Tmin_cap) {
+            Tprop = Tmin_cap;
+        }
+    }
+
+    Phase::setTemperature(Tprop);
+    m_prev_T = Tprop;
+
+    // keep your electron kT update in sync
+    m_kT = Boltzmann * Tprop / ElectronCharge;
+} */
 
 void PlasmaPhase::updateElectronEnergyDistribution()
 {
@@ -76,29 +113,78 @@ void PlasmaPhase::updateElectronEnergyDistribution()
     } else if (m_distributionType == "isotropic") {
         setIsotropicElectronEnergyDistribution();
     } else if (m_distributionType == "TwoTermApproximation") {
-        auto ierr = ptrEEDFSolver->calculateDistributionFunction();
-        if (ierr == 0) {
-            auto x = ptrEEDFSolver->getGridEdge();
-            auto y = ptrEEDFSolver->getEEDFEdge();
-            m_nPoints = x.size();
-            m_electronEnergyLevels = Eigen::Map<const Eigen::ArrayXd>(x.data(), m_nPoints);
-            m_electronEnergyDist = Eigen::Map<const Eigen::ArrayXd>(y.data(), m_nPoints);
+        if (!(std::isfinite(EN()) && EN() > 0.0 && std::isfinite(N()) && N() > 0.0)) {
+            writelog("E/N or N invalid (EN={}, N={}): using isotropic fallback.\n", EN(), N());
+            m_distributionType = "isotropic";
+            setIsotropicElectronEnergyDistribution();
         } else {
-            throw CanteraError("PlasmaPhase::updateElectronEnergyDistribution",
-                "Call to calculateDistributionFunction failed.");
-        }
-        bool validEEDF = (
-            m_electronEnergyDist.size() == m_nPoints &&
-            m_electronEnergyDist.allFinite() &&
-            m_electronEnergyDist.maxCoeff() > 0.0 &&
-            m_electronEnergyDist.sum() > 0.0
-        );
+            int ierr = -1;
+            try {
+                ierr = ptrEEDFSolver->calculateDistributionFunction();
+            } catch (CanteraError& err) {
+                writelog("EEDF solver threw '{}'; using isotropic fallback.\n", err.what());
+                m_distributionType = "isotropic";
+                setIsotropicElectronEnergyDistribution();
+                // continue into the validity check below
+                ierr = -1;
+            } catch (...) {
+                writelog("EEDF solver threw unknown exception; using isotropic fallback.\n");
+                m_distributionType = "isotropic";
+                setIsotropicElectronEnergyDistribution();
+                ierr = -1;
+            }
 
-        if (validEEDF) {
-            updateElectronTemperatureFromEnergyDist();
-        } else {
-            writelog("Skipping Te update: EEDF is empty, non-finite, or unnormalized.\n");
+            if (ierr == 0) {
+                auto x = ptrEEDFSolver->getGridEdge();
+                auto y = ptrEEDFSolver->getEEDFEdge();
+                m_nPoints = x.size();
+                m_electronEnergyLevels = Eigen::Map<const Eigen::ArrayXd>(x.data(), m_nPoints);
+                m_electronEnergyDist   = Eigen::Map<const Eigen::ArrayXd>(y.data(), m_nPoints);
+
+                // floor and (try to) normalize
+                m_electronEnergyDist = m_electronEnergyDist.max(1e-300);
+                if (m_do_normalizeElectronEnergyDist) {
+                    try {
+                        normalizeElectronEnergyDistribution();
+                    } catch (...) { /* handled by validity check below */ }
+                }
+                // Recheck validity and fallback to isotropic if needed
+                bool validEEDF_now =
+                    (m_electronEnergyDist.size() == m_nPoints) &&
+                    m_electronEnergyDist.allFinite() &&
+                    (m_electronEnergyDist.maxCoeff() > 0.0) &&
+                    (m_electronEnergyDist.sum() > 0.0);
+
+                if (!validEEDF_now) {
+                    writelog("EEDF invalid after solver; falling back to isotropic distribution.\n");
+                    m_distributionType = "isotropic";
+                    setIsotropicElectronEnergyDistribution();
+                }
+
+            } else {
+                /* throw CanteraError("PlasmaPhase::updateElectronEnergyDistribution",
+                    "Call to calculateDistributionFunction failed."); */
+
+                writelog("calculateDistributionFunction() failed; using isotropic fallback.\n");
+                m_distributionType = "isotropic";
+                setIsotropicElectronEnergyDistribution();
+            }
+            bool validEEDF = (
+                m_electronEnergyDist.size() == m_nPoints &&
+                m_electronEnergyDist.allFinite() &&
+                m_electronEnergyDist.maxCoeff() > 0.0 &&
+                m_electronEnergyDist.sum() > 0.0
+            );
+
+            if (validEEDF) {
+                updateElectronTemperatureFromEnergyDist();
+            } else {
+                writelog("Skipping Te update: EEDF is empty, non-finite, or unnormalized.\n");
+            }
         }
+
+
+
     }
     updateElectronEnergyDistDifference();
     electronEnergyDistributionChanged();
@@ -109,12 +195,37 @@ void PlasmaPhase::normalizeElectronEnergyDistribution() {
     Eigen::ArrayXd eps32 = m_electronEnergyLevels.pow(3./2.);
     double norm = 2./3. * numericalQuadrature(m_quadratureMethod,
                                               m_electronEnergyDist, eps32);
-    if (norm < 0.0) {
-        throw CanteraError("PlasmaPhase::normalizeElectronEnergyDistribution",
-                           "The norm is negative. This might be caused by bad "
-                           "electron energy distribution");
+    if (!(norm > 0.0) || !std::isfinite(norm)) {
+        writelog("normalizeEEDF: invalid norm {}; using isotropic fallback.\n", norm);
+        m_distributionType = "isotropic";
+        setIsotropicElectronEnergyDistribution();
+        return;
     }
     m_electronEnergyDist /= norm;
+}
+
+void PlasmaPhase::sanitizeEEDF_()
+{
+    if (m_electronEnergyDist.size() != m_nPoints) {
+        return;
+    }
+    for (Eigen::Index i = 0; i < m_electronEnergyDist.size(); ++i) {
+        double v = m_electronEnergyDist[i];
+        if (!std::isfinite(v) || v < 0.0) {
+            m_electronEnergyDist[i] = 0.0;
+        }
+    }
+    m_electronEnergyDist = m_electronEnergyDist.max(m_minF0);
+    m_electronEnergyDist = m_electronEnergyDist.min(m_maxF0);
+    if (m_do_normalizeElectronEnergyDist) {
+        try {
+            normalizeElectronEnergyDistribution();
+        } catch (...) {
+            writelog("sanitizeEEDF_: normalization failed; using isotropic fallback.\n");
+            m_distributionType = "isotropic";
+            setIsotropicElectronEnergyDistribution();
+        }
+    }
 }
 
 void PlasmaPhase::setElectronEnergyDistributionType(const string& type)
@@ -219,6 +330,7 @@ void PlasmaPhase::setDiscretizedElectronEnergyDist(const double* levels,
     if (m_do_normalizeElectronEnergyDist) {
         normalizeElectronEnergyDistribution();
     }
+    sanitizeEEDF_();
     checkElectronEnergyDistribution();
     updateElectronEnergyDistDifference();
     updateElectronTemperatureFromEnergyDist();
@@ -277,6 +389,25 @@ void PlasmaPhase::setParameters(const AnyMap& phaseNode, const AnyMap& rootNode)
 {
     IdealGasPhase::setParameters(phaseNode, rootNode);
     m_root = rootNode;
+
+    if (phaseNode.hasKey("sigma_S_per_m")) {
+        m_sigma_override = phaseNode["sigma_S_per_m"].asDouble(); // S/m
+    }
+
+    // --- Read reduced field (E/N) or absolute E from the phase node ---
+    if (phaseNode.hasKey("E_over_N_Td")) {
+        // Numeric in Townsend (Td) without units conversion logic in Cantera
+        const double Td = phaseNode["E_over_N_Td"].asDouble(); // e.g., 100.0
+        setReducedElectricField(Td * 1e-21); // 1 Td = 1e-21 V·m²
+    } else if (phaseNode.hasKey("EN")) {
+        // SI value in V·m² (no expressions; must be a plain number)
+        setReducedElectricField(phaseNode["EN"].asDouble());
+    } else if (phaseNode.hasKey("electric-field")) {
+        // Allow absolute E with units, then back-compute E/N using current N
+        const double Eabs = phaseNode.convert("electric-field", "V/m");
+        const double Nnow = N();
+        setReducedElectricField((std::isfinite(Nnow) && Nnow > 0.0) ? Eabs / Nnow : 0.0);
+    }
 
     if (phaseNode.hasKey("electron-energy-distribution")) {
         const AnyMap eedf = phaseNode["electron-energy-distribution"].as<AnyMap>();
@@ -863,6 +994,8 @@ void PlasmaPhase::updateThermo() const
     m_g0_RT[k] = m_h0_RT[k] - m_s0_R[k];
     // update the nDensity array
     compute_nDensity();
+    // keep E consistent with current density
+    const_cast<PlasmaPhase*>(this)->m_E = EN() * molarDensity() * Avogadro;
 }
 
 void PlasmaPhase::compute_nDensity() const {
@@ -978,6 +1111,73 @@ void PlasmaPhase::getGibbs_RT(double* grt) const
         } else {
             grt[k] += log(electronPressure() / refPressure());
         }
+    }
+}
+
+bool PlasmaPhase::powerTermsReady() const noexcept {
+    const double N_val  = this->N();
+    const double E_abs  = this->E();
+    const double EN_val = this->EN();
+
+    if (m_sigma_override > 0.0) {
+        // accept either an absolute E or a valid EN*N
+        if (std::isfinite(E_abs) && E_abs > 0.0) return true;
+        if (std::isfinite(EN_val) && EN_val > 0.0 &&
+            std::isfinite(N_val)  && N_val  > 0.0) return true;
+        return false;
+    }
+    // original path when using mobility-based sigma
+    return (std::isfinite(EN_val) && EN_val > 0.0 &&
+            std::isfinite(N_val)  && N_val  > 0.0);
+}
+
+double PlasmaPhase::jouleHeatingPower_noexcept() const noexcept
+{
+    try {
+        // conductivity() should be safe / no-throw; otherwise wrap it as well
+        const double sigma = conductivity();
+        if (!(std::isfinite(sigma) && sigma > 0.0)) {
+            return 0.0;
+        }
+
+        // Prefer the cached/primary getter for E; if it’s not usable, recompute from EN*N
+        double E_field = E(); // [V/m]
+        if (!(std::isfinite(E_field) && E_field != 0.0)) {
+            const double EN_val = this->EN(); // [V·m^2]
+            const double N_val  = this->N();  // [1/m^3]
+            if (std::isfinite(EN_val) && EN_val > 0.0 &&
+                std::isfinite(N_val)  && N_val  > 0.0) {
+                E_field = EN_val * N_val;     // [V/m]
+            } else {
+                return 0.0;
+            }
+        }
+
+        const double q = sigma * E_field * E_field;   // [W/m^3]
+        return (std::isfinite(q) && q > 0.0) ? q : 0.0;
+
+    } catch (...) {
+        // Never let exceptions escape into the reactor ODE
+        return 0.0;
+    }
+}
+
+/* double PlasmaPhase::jouleHeatingPower_noexcept() const noexcept {
+    return 1.0e5;  // W/m^3 TEMP TEST: should give a clear nonzero dT/dt
+} */
+
+double PlasmaPhase::elasticPowerLoss_noexcept() const noexcept
+{
+    // Whatever model you use for e→heavy elastic power density; return 0 if not ready.
+    try {
+        // Example skeleton:
+        // if (!powerTermsReady()) return 0.0;
+        // double qE = computeElasticTransferPower(); // implement safely
+        // return std::isfinite(qE) ? qE : 0.0;
+        //return 0.0; // until you have a safe implementation
+        return const_cast<PlasmaPhase*>(this)->elasticPowerLoss();
+    } catch (...) {
+        return 0.0;
     }
 }
 

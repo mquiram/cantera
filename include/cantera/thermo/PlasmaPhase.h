@@ -434,6 +434,34 @@ public:
      */
     double elasticPowerLoss();
 
+    // --- ADD: simple helpers for power balance ---
+    // Electrical conductivity [S/m] using μe(E/N) and ne from the phase
+    double conductivity() const {
+        if (std::isfinite(m_sigma_override) && m_sigma_override > 0.0) {
+            return m_sigma_override;  // bypass mobility-based path
+        }
+        const double ne = nElectron();
+        double mu = 0.0;
+        try { mu = electronMobility(); } catch (...) { mu = 0.0; }
+        const double sig = ElectronCharge * ne * mu;
+        return (std::isfinite(sig) && sig > 0.0) ? sig : 0.0;
+    }
+
+    // Joule heating density q_J = σ * E^2  [W/m^3]
+    double jouleHeatingPower() const {
+        const double sig = conductivity();          // [S/m]
+        const double EE  = E();                     // [V/m]
+        const double qJ  = sig * EE * EE;           // [W/m^3]
+        return (std::isfinite(qJ) && qJ >= 0.0) ? qJ : 0.0;
+    }
+    // Returns true if all ingredients for computing Joule/elastic power are present.
+    bool powerTermsReady() const noexcept;
+    // Safe getters: never throw, never dereference invalid pointers, never return NaN/inf.
+    double jouleHeatingPower_noexcept() const noexcept;
+    double elasticPowerLoss_noexcept() const noexcept;
+
+
+
 protected:
 
     void initialize();
@@ -633,6 +661,22 @@ private:
 
     // NEW: lock flag (default off)
     bool m_lockTeToT = false;
+
+    // Stability knobs
+    double m_minTe   = 30.0;     // K floor for electron temperature
+    double m_minF0   = 1e-300;   // floor for EEDF entries
+    double m_maxF0   = 1e300;    // cap for EEDF entries
+
+    // Guard-rails for temperature during RHS evaluations
+    double m_prev_T = 300.0;   // last set temperature (initialize at construction)
+    double m_Tmin   = 300.0;   // absolute floor to stay within NASA/fit validity
+    double m_dTcap_down = 10.0; // max allowed drop per call [K]; tune (e.g., 5–20 K)
+    bool   m_limit_dT = true;  // enable/disable per-call limiter
+
+    double m_sigma_override = 0.0;
+
+    // Internal sanitizer (implemented in .cpp)
+    void sanitizeEEDF_();
 
     //! pointer to EEDF solver
     unique_ptr<EEDFTwoTermApproximation> ptrEEDFSolver = nullptr;

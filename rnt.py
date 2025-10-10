@@ -30,12 +30,15 @@ def gaussian_EN(t):
     return EN_peak * np.exp(-((t - pulse_center)**2) / (2 * pulse_width**2))
 
 # setup
-#gas = ct.Solution('A2NOx_hitest.yaml')
-gas = ct.Solution('nDodecane_ReitzNO_plasma.yaml')
+gas = ct.Solution('A2NOx_hitest.yaml')
+#gas = ct.Solution('nDodecane_ReitzNO_plasma.yaml')
 #gas = ct.Solution('gri30_plasma_cpavan.yaml')
-gas.TPX = 300., 101325., 'CH4:0.095, O2:0.19, N2:0.715, e:1E-11'
+gas.TPX = 2000., 3001325., 'CH4:0.095, O2:0.19, N2:0.715, e:1E-11'
+#gas.TPX = 2000., 3001325., 'POSF10325:0.095, O2:0.19, N2:0.715, e:1E-11'
+print("electron temp", gas.Te)
 gas.EN = gaussian_EN(0)
 gas.update_EEDF()
+print("electron temp", gas.Te)
 
 r = ct.Reactor(gas)
 #r.dis_vol = 5e-3 * np.pi * (1e-3)**2 / 4

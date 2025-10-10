@@ -32,6 +32,15 @@ struct ElectronCollisionPlasmaData : public ReactionData
         energyLevels.resize(0);
         distribution.resize(0);
     }
+    /* void invalidateCache() override {
+        ReactionData::invalidateCache();
+        energyLevels.clear();
+        distribution.clear();
+        // Force the next update() to repopulate both vectors
+        m_dist_number = -1;
+        m_level_number = -1;
+        levelChanged = true;
+    } */
 
     vector<double> energyLevels; //!< electron energy levels
     vector<double> distribution; //!< electron energy distribution

@@ -11,6 +11,7 @@ from itertools import count
 
 #import hy2combustor as Combustor  # Assuming renamed from old 'Combustor' for compatibility
 import pc1 as Combustor
+ct.CanteraError.set_stack_trace_depth(10)
 
 ct.add_directory('../reacMechs')
 
@@ -37,10 +38,16 @@ Tt4 = NPSS_data['T04[R]'].values[0::k] * 100 / 180  # Convert Rankine to Kelvin
 # -----------------------------------------------
 # Set up combustor chemistry and geometry
 # -----------------------------------------------
-Combustor.setChem(
+""" Combustor.setChem(
     RM='nDodecane_ReitzNO_plasma.yaml',              # Use n-Dodecane plasma mechanism
     Fuel='c12h26',                         # Fuel species
     Oxidizer='O2:0.2078, N2:0.782, H2O:0.0101'  # Air composition (wet)
+) """
+
+Combustor.setChem(
+    RM='A2NOx_hitest.yaml',              # Use n-Dodecane plasma mechanism
+    Fuel='POSF10325',                         # Fuel species
+    Oxidizer='O2:0.2078, N2:0.782, H2O:0.0101, e:1E-11'  # Air composition (wet)
 )
 
 Combustor.setGeometry(

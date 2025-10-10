@@ -9,6 +9,7 @@
 #include "cantera/kinetics/Kinetics.h"
 #include "cantera/thermo/ThermoPhase.h"
 #include "cantera/base/utilities.h"
+#include "cantera/thermo/PlasmaPhase.h"
 
 namespace Cantera
 {
@@ -91,6 +92,17 @@ void IdealGasReactor::eval(double time, double* LHS, double* RHS)
 
     // compression work and external heat transfer
     mcvdTdt += - m_pressure * m_vdot + m_Qdot;
+
+    if (m_energy && m_vol > 0) {
+        if (const auto* plasma = dynamic_cast<const PlasmaPhase*>(m_thermo)) {
+            const double qJ = plasma->jouleHeatingPower_noexcept();  // W/m^3
+            const double qE = plasma->elasticPowerLoss_noexcept();   // W/m^3
+            const double q_total = qJ + qE;
+            if (std::isfinite(q_total) && q_total != 0.0) {
+                mcvdTdt += q_total * m_vol; // [W/m^3]*[m^3] = W → into m*cp*dT/dt (works for CV and CP)
+            }
+        }
+    }
 
     for (size_t n = 0; n < m_nsp; n++) {
         // heat release from gas phase and surface reactions

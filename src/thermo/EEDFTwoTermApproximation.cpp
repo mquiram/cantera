@@ -139,18 +139,31 @@ void EEDFTwoTermApproximation::converge(Eigen::VectorXd& f0)
         err1 = norm(Df0, m_gridCenter);
 
         if ((f0.array() != f0.array()).any()) {
-            throw CanteraError("EEDFTwoTermApproximation::converge",
-                               "NaN detected in EEDF solution.");
+            // NaN in solution: fallback to Maxwellian guess and return
+            writelog("EEDFTwoTermApproximation::converge: NaN detected; using Maxwell fallback.\n");
+            for (size_t j = 0; j < options.m_points; j++) {
+                f0(j) = 2.0 * pow(1.0 / Pi, 0.5) * pow(options.m_init_kTe, -1.5)
+                        * exp(-m_gridCenter[j] / options.m_init_kTe);
+            }
+            f0 /= norm(f0, m_gridCenter);
+            return;
         }
         if ((f0.array().abs() > 1e300).any()) {
-            throw CanteraError("EEDFTwoTermApproximation::converge",
-                               "Inf detected in EEDF solution.");
+            // Inf in solution: same fallback
+            writelog("EEDFTwoTermApproximation::converge: Inf detected; using Maxwell fallback.\n");
+            for (size_t j = 0; j < options.m_points; j++) {
+                f0(j) = 2.0 * pow(1.0 / Pi, 0.5) * pow(options.m_init_kTe, -1.5)
+                        * exp(-m_gridCenter[j] / options.m_init_kTe);
+            }
+            f0 /= norm(f0, m_gridCenter);
+            return;
         }
 
         if (err1 < options.m_rtol) {
             break;
         } else if (n == options.m_maxn - 1) {
-            throw CanteraError("WeaklyIonizedGas::converge", "Convergence failed");
+            writelog("EEDFTwoTermApproximation::converge: max iterations; returning last iterate.\n");
+            return;
         }
     }
 }
@@ -236,6 +249,18 @@ Eigen::VectorXd EEDFTwoTermApproximation::iterate(const Eigen::VectorXd& f0, dou
     if ((f1.array() != f1.array()).any()) {
         throw CanteraError("EEDFTwoTermApproximation::iterate",
                            "NaN detected in computed f1.");
+    }
+
+    {
+        const double fmin = 1e-300;
+        const double fmax = 1e300;
+        for (int i = 0; i < f1.size(); ++i) {
+            if (!std::isfinite(f1[i]) || f1[i] < fmin) {
+                f1[i] = fmin;
+            } else if (f1[i] > fmax) {
+                f1[i] = fmax;
+            }
+        }
     }
 
     f1 /= norm(f1, m_gridCenter);
@@ -386,16 +411,26 @@ SparseMat_fp EEDFTwoTermApproximation::matrix_A(const Eigen::VectorXd& f0)
             W -= m_gamma / 3.0 * 2 * alpha * m_phase->E() / m_phase->N() * m_gridEdge[j] / sigma_tilde;
         }
 
+        const double tinyD = 1e-300;
+        if (!std::isfinite(D) || std::abs(D) < tinyD) {
+            // keep the step stable: replace near-zero/NaN D with a tiny positive guard
+            D = (D >= 0.0 || !std::isfinite(D)) ? tinyD : -tinyD;
+        }
         double z = W * (m_gridCenter[j] - m_gridCenter[j-1]) / D;
-        if (!std::isfinite(z)) {
-            throw CanteraError("matrix_A", "Non-finite Peclet number encountered");
-        }
-        if (std::abs(z) > 500) {
-            writelog("Warning: Large Peclet number z = {:.3e} at j = {}. W = {:.3e}, D = {:.3e}, E/N = {:.3e}\n",
-                    z, j, W, D, m_phase->E() / m_phase->N());
-        }
-        a0[j] = W / (1 - std::exp(-z));
-        a1[j] = W / (1 - std::exp(z));
+
+        // Clamp z to a safe range and handle non-finite
+        if (!std::isfinite(z)) z = 0.0;
+        if (z > 500.0)  z = 500.0;
+        if (z < -500.0) z = -500.0;
+
+        // Use expm1 for numerical stability
+        double denom0 = -std::expm1(-z); // 1 - exp(-z)
+        double denom1 = -std::expm1( z); // 1 - exp( z)
+        if (std::abs(denom0) < 1e-300) denom0 = (z == 0.0 ? 1e-300 : z);   // first-order fallback
+        if (std::abs(denom1) < 1e-300) denom1 = (z == 0.0 ? 1e-300 : -z);
+
+        a0[j] = W / denom0;
+        a1[j] = W / denom1;
     }
 
     std::vector<Triplet_fp> tripletList;
