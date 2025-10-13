@@ -397,6 +397,53 @@ def CombustorPZ(Params, gas):
             streamQuantity.mass = Params.PZ_mdot_in_lst[i]
             streamQuantityList.append(streamQuantity)
 
+            print("electron conc", state.X[:, gas.species_index('e')])
+
+            fig, ax = plt.subplots(2)
+
+            ax[0].plot(state.t, state.X[:, gas.species_index('e')], label='e')
+            ax[0].plot(state.t, state.X[:, gas.species_index('O2+')], label='O2+')
+            ax[0].plot(state.t, state.X[:, gas.species_index('N2+')], label='N2+')
+            ax[0].plot(state.t, state.X[:, gas.species_index('H2O+')], label='H2O+')
+            ax[0].plot(state.t, state.X[:, gas.species_index('CH4+')], label='CH4+')
+            ax[0].plot(state.t, state.X[:, gas.species_index('O')], label='O')
+            ax[0].plot(state.t, state.X[:, gas.species_index('N2(A)')], label='N2(A)')
+            ax[0].plot(state.t, state.X[:, gas.species_index('N2(B)')], label='N2(B)')
+            ax[0].plot(state.t, state.X[:, gas.species_index('N2(C)')], label='N2(C)')
+            ax[0].plot(state.t, state.X[:, gas.species_index("N2(a')")], label="N2(a')")
+            ax[0].plot(state.t, state.X[:, gas.species_index('CH3')], label='CH3', linestyle='--')
+            ax[0].plot(state.t, state.X[:, gas.species_index('CO2')], label='CO2', linestyle='--')
+            ax[0].plot(state.t, state.X[:, gas.species_index('CO')], label='CO', linestyle='--')
+            ax[0].plot(state.t, state.X[:, gas.species_index('H2O')], label='H2O', linestyle='--')
+            ax[0].plot(state.t, state.X[:, gas.species_index('H')], label='H', linestyle='--')
+            ax[0].plot(state.t, state.X[:, gas.species_index('OH')], label='OH', linestyle='--')
+            # N2 vibrational states
+            """ ax[0].plot(states.t, states.X[:, gas.species_index('N2(v1)')], label='N2(v1)')
+            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v2)')], label='N2(v2)')
+            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v3)')], label='N2(v3)')
+            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v4)')], label='N2(v4)')
+            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v5)')], label='N2(v5)')
+            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v6)')], label='N2(v6)')
+            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v7)')], label='N2(v7)')
+            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v8)')], label='N2(v8)') """
+
+            ax[0].set_yscale('log')
+            #ax[0].set_xscale('log')
+            ax[0].set_xlim([0.005, 0.0050001])
+            ax[0].set_ylim([1e-14, 1e-3])
+
+            ax[1].plot(state.t, state.T, label='T')
+
+            for axx in ax:
+                axx.legend(loc='lower right')
+                axx.set_xlabel('Time [s]')
+
+            ax[0].set_ylabel('Mole fraction [-]')
+            ax[1].set_ylabel('Temperature [K]')
+
+            plt.tight_layout()
+            plt.show()
+
         #Params.PZ_states.append(state_thermo)  # scalar properties, handled by your print helper
 
         """ # Integrate

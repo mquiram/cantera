@@ -105,7 +105,7 @@ void PlasmaPhase::setTemperature(const double temp)
     m_kT = Boltzmann * Tprop / ElectronCharge;
 } */
 
-void PlasmaPhase::updateElectronEnergyDistribution()
+/* void PlasmaPhase::updateElectronEnergyDistribution()
 {
     if (m_distributionType == "discretized") {
         throw CanteraError("PlasmaPhase::updateElectronEnergyDistribution",
@@ -146,7 +146,7 @@ void PlasmaPhase::updateElectronEnergyDistribution()
                 if (m_do_normalizeElectronEnergyDist) {
                     try {
                         normalizeElectronEnergyDistribution();
-                    } catch (...) { /* handled by validity check below */ }
+                    } catch (...) {}
                 }
                 // Recheck validity and fallback to isotropic if needed
                 bool validEEDF_now =
@@ -162,8 +162,6 @@ void PlasmaPhase::updateElectronEnergyDistribution()
                 }
 
             } else {
-                /* throw CanteraError("PlasmaPhase::updateElectronEnergyDistribution",
-                    "Call to calculateDistributionFunction failed."); */
 
                 writelog("calculateDistributionFunction() failed; using isotropic fallback.\n");
                 m_distributionType = "isotropic";
@@ -189,6 +187,30 @@ void PlasmaPhase::updateElectronEnergyDistribution()
     updateElectronEnergyDistDifference();
     electronEnergyDistributionChanged();
 
+} */
+
+void PlasmaPhase::updateElectronEnergyDistribution()
+{
+    if (m_distributionType == "discretized") {
+        throw CanteraError("PlasmaPhase::updateElectronEnergyDistribution",
+            "Invalid for discretized electron energy distribution.");
+    } else if (m_distributionType == "isotropic") {
+        setIsotropicElectronEnergyDistribution();
+    } else if (m_distributionType == "TwoTermApproximation") {
+        auto ierr = ptrEEDFSolver->calculateDistributionFunction();
+        if (ierr == 0) {
+            auto x = ptrEEDFSolver->getGridEdge();
+            auto y = ptrEEDFSolver->getEEDFEdge();
+            m_nPoints = x.size();
+            m_electronEnergyLevels = Eigen::Map<const Eigen::ArrayXd>(x.data(), m_nPoints);
+            m_electronEnergyDist = Eigen::Map<const Eigen::ArrayXd>(y.data(), m_nPoints);
+        } else {
+            throw CanteraError("PlasmaPhase::updateElectronEnergyDistribution",
+                "Call to calculateDistributionFunction failed.");
+        }
+    }
+    electronEnergyDistributionChanged();
+    updateElectronTemperatureFromEnergyDist();
 }
 
 void PlasmaPhase::normalizeElectronEnergyDistribution() {

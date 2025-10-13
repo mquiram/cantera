@@ -689,7 +689,7 @@ class PSR_Plasma:
         # Pulse timing / EN profile
         EN_peak = 100 * 1e-21  # Td
         c0        = 24e-9
-        period    = 1e-4
+        period    = 50e-4
         sigma     = 3e-9
         pre_win   = 30e-9
         post_win  = 70e-9
@@ -724,6 +724,7 @@ class PSR_Plasma:
         print("electron temp", self.rgas.Te)
         EN_now = gaussian_about_center(0, c0)
         self.rgas.EN = EN_now
+        print("EN ", self.rgas.EN)
         self.rgas.update_EEDF()
         print("electron temp 2", self.rgas.Te)
 
@@ -760,6 +761,7 @@ class PSR_Plasma:
                         _apply_lowT_vt_clamp(self.reactor.thermo, self._vt_idx, Tcut=200.0, delta=20.0)
                         #_hard_lowT_vt_guard(self.reactor.thermo, self._vt_idx, Tcut=200.0, hyst=20.0, verbose=False)
                         self.sim.advance(target)
+                        #print("EN ", self.rgas.EN)
 
                         q_chem, q_wall, dTdt_est, rho_cp = _energy_budget(self.rgas, self.reactor)
                         if not np.isfinite(q_chem):
@@ -835,6 +837,7 @@ class PSR_Plasma:
                             raise RuntimeError("[energy] Non-finite q_chem detected; aborting step.")
 
                         self.sim.advance(target)
+                        #print("EN ", self.rgas.EN)
 
                         """ ok = _energy_watch(self.rgas, self.reactor, tag="step")
                         if not ok:
