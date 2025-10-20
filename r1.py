@@ -689,7 +689,7 @@ class PSR_Plasma:
         # Pulse timing / EN profile
         EN_peak = 2e6 #40 * 1e-21  # Td 2e6
         c0        = 24e-9
-        period    = 50e-4 #50e-4
+        period    = 1e-4 #50e-4
         sigma     = 3e-9
         pre_win   = 30e-9
         post_win  = 70e-9

@@ -330,16 +330,23 @@ def CombustorPZ(Params, gas):
 
         use_total = getattr(Params, "PZ_tau_use_total", True)
         mdot_for_tau = mdot_in_i if use_total else mdot_air_i
-        tau_geom = V_i / max(mdot_for_tau, 1e-16)
+        rho_in  = float(g0.density)
+        tau_geom = rho_in * V_i / max(mdot_for_tau, 1e-16)
 
-        k_tau = float(getattr(Params, "PZ_k_tau", 6.0))
+        k_tau = float(getattr(Params, "PZ_k_tau", 1.0))
         tmin  = float(getattr(Params, "PZ_tmin", 5e-4))
         tmax  = float(getattr(Params, "PZ_tmax",  1e9))
-        t_end_i = max(min(k_tau * tau_geom, tmax), tmin)
+        #t_end_i = max(min(k_tau * tau_geom, tmax), tmin)
+        t_end_i = tau_geom
+        print("k_tau", k_tau)
+        print("rho_in", rho_in)
+        print("V_i", V_i)
+        print("mdot_for_tau", mdot_for_tau)
+        print("t_end_i", t_end_i)
 
         # (optional) keep backward-compat feel: ensure at least old PZ_tsim
         #t_end_i = max(t_end_i, float(Params.PZ_tsim))
-        t_end_i = Params.PZ_tsim
+        #t_end_i = Params.PZ_tsim
 
         if Params.debug:
             print(f"[PZ{i+1:02d}] τ_geom={tau_geom:.4e} s | k={k_tau:g} → t_end_i={t_end_i:.4e} s "
@@ -386,6 +393,10 @@ def CombustorPZ(Params, gas):
             #state = reactor.run(t_end=PZ_tsim, dt=1e-5, dt_EN=1e-5)  # Can adapt dt if needed
             rho_out = reactor.reactor.thermo.density
             tres = rho_out * Params.PZ_V_lst[i] / Params.PZ_mdot_in_lst[i]
+            print("rho_out", rho_out)
+            print("V_lst", Params.PZ_V_lst[i])
+            print("mdot_in_lst", Params.PZ_mdot_in_lst[i])
+            print("tres", tres)
             Params.PZ_tres_lst.append(tres)
 
             # Store results
