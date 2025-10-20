@@ -687,9 +687,9 @@ class PSR_Plasma:
         eps = 1e-12  #
 
         # Pulse timing / EN profile
-        EN_peak = 100 * 1e-21  # Td
+        EN_peak = 2e6 #40 * 1e-21  # Td 2e6
         c0        = 24e-9
-        period    = 50e-4
+        period    = 50e-4 #50e-4
         sigma     = 3e-9
         pre_win   = 30e-9
         post_win  = 70e-9
@@ -711,7 +711,7 @@ class PSR_Plasma:
         # Nominal multipliers @ moderate drive:
         mults = [9.0, 6.5, 5.5, 7.0, 5.0, 5.5, 7.5]
 
-        S = (EN_peak/(100 * 1e-21))**0.5
+        S = (EN_peak/(2e6))**0.5
         #print(S)
         S = max(0.5, min(2.0, S))  # clip
         #print(S)
@@ -723,8 +723,8 @@ class PSR_Plasma:
 
         print("electron temp", self.rgas.Te)
         EN_now = gaussian_about_center(0, c0)
-        self.rgas.EN = EN_now
-        print("EN ", self.rgas.EN)
+        self.rgas.electric_field = EN_now
+        print("EN ", self.rgas.electric_field)
         self.rgas.update_EEDF()
         print("electron temp 2", self.rgas.Te)
 
@@ -741,7 +741,7 @@ class PSR_Plasma:
                 dt_use  = dt_coarse
 
                 # EN ~ 0 here
-                self.rgas.EN = 0.0
+                self.rgas.electric_field = 0.0
                 self.rgas.update_EEDF()
                 self.sim.reinitialize()
 
@@ -880,7 +880,7 @@ class PSR_Plasma:
 
                 # update EN/EEDF at the end of each small chunk using current time
                 EN_now = gaussian_about_center(self.sim.time, c_next)
-                self.rgas.EN = EN_now
+                self.rgas.electric_field = EN_now
                 self.rgas.update_EEDF()
                 self.sim.reinitialize()
 

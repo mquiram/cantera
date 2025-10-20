@@ -403,10 +403,35 @@ public:
         return m_kElastic;
     }
 
+    //! Get the applied electric field strength [V/m]
+    double electricField() const {
+        return m_E;
+    }
+
+    //! Set the absolute electric field strength [V/m]
+    /* void setElectricField(double E) {
+        m_E = E;
+    } */
+    void setElectricField(double E) {
+        m_fieldMode = FieldSpecMode::AbsoluteE;
+        m_E = std::isfinite(E) ? E : 0.0;
+        const double Nnow = N();
+        m_EN = (std::isfinite(Nnow) && Nnow > 0.0) ? (m_E / Nnow) : 0.0;
+    }
+
+    double reducedElectricField() const {
+        return m_E / (molarDensity() * Avogadro);
+    }
+
     //! Set reduced electric field given in [V.m2]
-    void setReducedElectricField(double EN) {
+    /* void setReducedElectricField(double EN) {
         m_EN = EN; // [V.m2]
         m_E = m_EN * molarDensity() * Avogadro; // [V/m]
+    } */
+    void setReducedElectricField(double EN) {
+        m_fieldMode = FieldSpecMode::ReducedEN;
+        m_EN = std::isfinite(EN) ? EN : 0.0;
+        m_E  = m_EN * N();  // N() is moles/m^3 * Avogadro
     }
 
     size_t nsp_evib() const {
@@ -554,7 +579,7 @@ protected:
     vector<size_t> m_kInelastic;
 
     //! electric field [V/m]
-    double m_E;
+    double m_E = 0.0;
 
     //! reduced electric field [V.m2]
     double m_EN;
@@ -717,6 +742,9 @@ private:
 
     //! Collision cross section
     vector<Eigen::ArrayXd> m_interpolatedCrossSections;
+
+    enum class FieldSpecMode { ReducedEN, AbsoluteE };
+    FieldSpecMode m_fieldMode = FieldSpecMode::ReducedEN;
 
 };
 

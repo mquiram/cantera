@@ -22,7 +22,7 @@ mults = [9.0, 6.5, 5.5, 7.0, 5.0, 5.5, 7.5]
 
 SZ_start_time = time.time()
 # Gaussian pulse parameters
-EN_peak = 190 * 1e-21  # Td
+EN_peak = 2.1e7 #2.4e7 #190 * 1e-21  # Td
 pulse_center = 24e-9
 pulse_width = 3e-9    # standard deviation in ns
 
@@ -36,7 +36,8 @@ gas = ct.Solution('A2NOx_hitest.yaml')
 gas.TPX = 2000., 3001325., 'CH4:0.095, O2:0.19, N2:0.715, e:1E-11'
 #gas.TPX = 2000., 3001325., 'POSF10325:0.095, O2:0.19, N2:0.715, e:1E-11'
 print("electron temp", gas.Te)
-gas.EN = gaussian_EN(0)
+gas.electric_field = gaussian_EN(0)
+#gas.EN = gaussian_EN(0)
 gas.update_EEDF()
 print("electron temp", gas.Te)
 
@@ -57,7 +58,8 @@ print('{:>10} {:>10} {:>10} {:>14}'.format('t [s]', 'T [K]', 'P [Pa]', 'u [J/kg]
 # simulate in 1 ns chunks
 t = 0.0
 
-S = (EN_peak/(190 * 1e-21))**0.5
+#S = (EN_peak/(190 * 1e-21))**0.5
+S = (EN_peak/(2.1e7))**0.5
 print(S)
 S = max(0.5, min(2.0, S))  # clip
 print(S)
@@ -81,12 +83,13 @@ while t < t_total:
             sim.time, r.T, r.thermo.P, r.thermo.h))
 
     EN_t = gaussian_EN(t)
-    gas.EN = EN_t
+    gas.electric_field = EN_t
+    #gas.EN = EN_t
     gas.update_EEDF()
 
     # reinitialize integrator with new source terms
     sim.reinitialize()
-    print(gas.electron_energy_distribution)
+    #print(gas.electron_energy_distribution)
 
     t = t_end
 

@@ -30,7 +30,7 @@ sim = ct.ReactorNet([r])
 sim.verbose = False
 
 # simulation parameters
-t_total = 300070e-9 #5
+t_total = 500000e-9 #300070e-9
 dt_max = 1e-10
 dt_chunk = 1e-9  # 1 ns chunk
 states = ct.SolutionArray(gas, extra=['t'])
@@ -75,7 +75,7 @@ while t < t_total:
     gas.TPX = gas.T*(1+1e-12), gas.P, gas.X   # tiny T nudge (forces thermo-change)
     gas.set_multiplier(1.0, 0)         # tick any reaction multiplier (forces kinetics-change)
     print("EN ", gas.EN)
-    print(gas.electron_energy_distribution)
+    #print(gas.electron_energy_distribution)
 
     # reinitialize integrator with new source terms
     sim.reinitialize()

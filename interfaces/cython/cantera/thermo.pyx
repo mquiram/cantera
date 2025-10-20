@@ -1795,6 +1795,17 @@ cdef class ThermoPhase(_SolutionBase):
                 raise ThermoModelMethodError(self.thermo_model)
             self.plasma.setReducedElectricField(value)
 
+    property electric_field:
+        def __get__(self):
+            if not self._enable_plasma:
+                raise ThermoModelMethodError(self.thermo_model)
+            return self.plasma.electricField()
+
+        def __set__(self, value):
+            if not self._enable_plasma:
+                raise ThermoModelMethodError(self.thermo_model)
+            self.plasma.setElectricField(value)
+
     def set_discretized_electron_energy_distribution(self, levels, distribution):
         """
         Set electron energy distribution. When this method is used, electron

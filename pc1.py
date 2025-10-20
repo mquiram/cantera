@@ -399,7 +399,7 @@ def CombustorPZ(Params, gas):
 
             print("electron conc", state.X[:, gas.species_index('e')])
 
-            fig, ax = plt.subplots(2)
+            """ fig, ax = plt.subplots(2)
 
             ax[0].plot(state.t, state.X[:, gas.species_index('e')], label='e')
             ax[0].plot(state.t, state.X[:, gas.species_index('O2+')], label='O2+')
@@ -418,14 +418,14 @@ def CombustorPZ(Params, gas):
             ax[0].plot(state.t, state.X[:, gas.species_index('H')], label='H', linestyle='--')
             ax[0].plot(state.t, state.X[:, gas.species_index('OH')], label='OH', linestyle='--')
             # N2 vibrational states
-            """ ax[0].plot(states.t, states.X[:, gas.species_index('N2(v1)')], label='N2(v1)')
+            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v1)')], label='N2(v1)')
             ax[0].plot(states.t, states.X[:, gas.species_index('N2(v2)')], label='N2(v2)')
             ax[0].plot(states.t, states.X[:, gas.species_index('N2(v3)')], label='N2(v3)')
             ax[0].plot(states.t, states.X[:, gas.species_index('N2(v4)')], label='N2(v4)')
             ax[0].plot(states.t, states.X[:, gas.species_index('N2(v5)')], label='N2(v5)')
             ax[0].plot(states.t, states.X[:, gas.species_index('N2(v6)')], label='N2(v6)')
             ax[0].plot(states.t, states.X[:, gas.species_index('N2(v7)')], label='N2(v7)')
-            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v8)')], label='N2(v8)') """
+            ax[0].plot(states.t, states.X[:, gas.species_index('N2(v8)')], label='N2(v8)')
 
             ax[0].set_yscale('log')
             #ax[0].set_xscale('log')
@@ -442,7 +442,7 @@ def CombustorPZ(Params, gas):
             ax[1].set_ylabel('Temperature [K]')
 
             plt.tight_layout()
-            plt.show()
+            plt.show() """
 
         #Params.PZ_states.append(state_thermo)  # scalar properties, handled by your print helper
 
