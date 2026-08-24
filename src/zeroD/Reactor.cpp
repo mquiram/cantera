@@ -13,6 +13,7 @@
 #include "cantera/kinetics/Reaction.h"
 #include "cantera/base/Solution.h"
 #include "cantera/base/utilities.h"
+#include "cantera/thermo/PlasmaPhase.h"
 
 #include <boost/math/tools/roots.hpp>
 
@@ -262,6 +263,16 @@ void Reactor::eval(double time, double* LHS, double* RHS)
     // @f]
     if (m_energy) {
         RHS[2] = - m_thermo->pressure() * m_vdot + m_Qdot;
+        if (m_vol > 0) {
+            if (const auto* plasma = dynamic_cast<const PlasmaPhase*>(m_thermo)) {
+                const double qJ = plasma->jouleHeatingPower_noexcept();   // W/m^3
+                const double qE = plasma->elasticPowerLoss_noexcept();    // W/m^3
+                const double q_total = qJ;
+                if (std::isfinite(q_total) && q_total != 0.0) {
+                    RHS[2] += q_total * m_vol; // W
+                }
+            }
+        }
     } else {
         RHS[2] = 0.0;
     }

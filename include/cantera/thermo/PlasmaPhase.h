@@ -459,6 +459,29 @@ public:
      */
     double elasticPowerLoss();
 
+    //! Per-collision elastic power loss contributions [W/m^3]
+    //!
+    //! Returns a vector of length nCollisions(), where entry i corresponds to
+    //! collision i in the internal collision list. The value is computed as:
+    //!   P_i = N_A^2 * e * C_e * C_target(i) * K_i
+    //! where K_i is the elastic electron energy loss coefficient [eV m^3/s].
+    vector<double> electronCollisionElasticPowers();
+
+    //! Per-collision inelastic power loss contributions [W/m^3]
+    //!
+    //! Computed using the forward rate coefficient k_f for each
+    //! electron-collision-plasma reaction and the threshold energy U (taken as
+    //! the first entry of the reaction's energyLevels array):
+    //!   P_i = N_A * e * U_i * (k_f,i * C_e * C_target(i))
+    //! where C are concentrations in [kmol/m^3] and k_f is [m^3/kmol/s].
+    vector<double> electronCollisionInelasticPowers();
+
+    //! Per-collision metadata helpers (length nCollisions())
+    vector<string> electronCollisionKinds() const;
+    vector<string> electronCollisionTargets() const;
+    vector<string> electronCollisionProducts() const;
+    vector<double> electronCollisionThresholds() const; // [eV]
+
     // --- ADD: simple helpers for power balance ---
     // Electrical conductivity [S/m] using μe(E/N) and ne from the phase
     double conductivity() const {

@@ -28,6 +28,8 @@ cdef extern from "cantera/kinetics/ReactionPath.h":
         void setFlowType(string) except +translate_exception
         string m_font
         void add(shared_ptr[CxxReactionPathDiagram]) except +translate_exception
+        void add(shared_ptr[CxxReactionPathDiagram], double) except +translate_exception
+        void scaleFlows(double)
         void displayOnly(size_t)
         void build() except +translate_exception
         string getDot() except +translate_exception

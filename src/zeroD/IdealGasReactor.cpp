@@ -97,7 +97,7 @@ void IdealGasReactor::eval(double time, double* LHS, double* RHS)
         if (const auto* plasma = dynamic_cast<const PlasmaPhase*>(m_thermo)) {
             const double qJ = plasma->jouleHeatingPower_noexcept();  // W/m^3
             const double qE = plasma->elasticPowerLoss_noexcept();   // W/m^3
-            const double q_total = qJ + qE;
+            const double q_total = qJ;
             if (std::isfinite(q_total) && q_total != 0.0) {
                 mcvdTdt += q_total * m_vol; // [W/m^3]*[m^3] = W → into m*cp*dT/dt (works for CV and CP)
             }

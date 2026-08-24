@@ -98,6 +98,11 @@ public:
      */
     void addReaction(size_t rxnNumber, double value, const string& label = "");
 
+    //! Scale all flows in this path by @c factor.
+    void scaleFlows(double factor);
+
+    void add(const Path& other, double factor = 1.0);
+
     //! Upstream node.
     const SpeciesNode* begin() const {
         return m_a;
@@ -230,6 +235,22 @@ public:
 
     //! Add fluxes from other ReactionPathDiagram to this diagram.
     void add(shared_ptr<ReactionPathDiagram> d);
+
+    //! Add fluxes from other ReactionPathDiagram to this diagram, scaled by @c weight.
+    //! This enables numerical integration over time or space: accumulate diagrams
+    //! built at successive steps by calling add(d, dt) at each step, and scale the
+    //! initial diagram with scaleFlows(dt0) before starting the loop.
+    void add(ReactionPathDiagram& d, double weight);
+
+    //! Add fluxes from other ReactionPathDiagram to this diagram, scaled by @c weight.
+    void add(shared_ptr<ReactionPathDiagram> d, double weight);
+
+    //! Scale all flows in this diagram by @c factor.
+    //! Use this to weight the initial diagram before accumulating subsequent steps
+    //! via add(d, weight).
+    void scaleFlows(double factor);
+
+    bool special_electron_mode = true;
 
     SpeciesNode* node(size_t k) {
         return m_nodes[k];
@@ -374,6 +395,12 @@ public:
 
     //! Analyze a reaction to determine which reactants lead to which products.
     int findGroups(std::ostream& logfile, Kinetics& s);
+
+    bool isPureElectronSpecies(size_t k, size_t mElectron) const;
+    bool isExcitedSpeciesName(const string& name) const;
+    bool isChargedSpeciesName(const string& name) const;
+    bool isPlasmaSpeciesName(const string& name) const;
+    string reactionClassLabel(Kinetics& s, size_t i, size_t mElectron) const;
 
 protected:
     void findElements(Kinetics& kin);

@@ -96,9 +96,9 @@ void IdealGasConstPressureReactor::eval(double time, double* LHS, double* RHS)
     // --- ADD: plasma power terms (heavy-gas heating) ---
     if (m_energy && m_vol > 0) {
         if (const auto* plasma = dynamic_cast<const PlasmaPhase*>(m_thermo)) {
-            const double qJ = plasma->jouleHeatingPower_noexcept();  // W/m^3
-            const double qE = plasma->elasticPowerLoss_noexcept();   // W/m^3
-            const double q_total = qJ + qE;
+            const double qJ = plasma->jouleHeatingPower_noexcept(); // σE^2  [W/m^3]
+            const double qE = plasma->elasticPowerLoss_noexcept(); // elastic transfer [W/m^3]
+            const double q_total = qJ + qE; // total power [W]
             if (std::isfinite(q_total) && q_total != 0.0) {
                 mcpdTdt += q_total * m_vol; // [W/m^3]*[m^3] = W → into m*cp*dT/dt (works for CV and CP)
             }

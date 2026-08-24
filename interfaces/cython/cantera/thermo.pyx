@@ -1776,6 +1776,13 @@ cdef class ThermoPhase(_SolutionBase):
                 raise ThermoModelMethodError(self.thermo_model)
             self.plasma.setElectronTemperature(value)
 
+    property electron_mobility:
+        """Electron mobility [m^2/V/s]."""
+        def __get__(self):
+            if not self._enable_plasma:
+                raise ThermoModelMethodError(self.thermo_model)
+            return self.plasma.electronMobility()
+
     property Pe:
         """Get electron Pressure [Pa]."""
         def __get__(self):
@@ -1942,6 +1949,78 @@ cdef class ThermoPhase(_SolutionBase):
             if not self._enable_plasma:
                 raise ThermoModelMethodError(self.thermo_model)
             return self.plasma.elasticPowerLoss()
+
+    property joule_heating_power:
+         """
+         Joule heating power density (J/s/m3)
+         .. versionadded:: 3.2
+         """
+         def __get__(self):
+             if not self._enable_plasma:
+                 raise ThermoModelMethodError(self.thermo_model)
+             return self.plasma.jouleHeatingPower_noexcept()
+
+    property elastic_power_loss_noexcept:
+         """
+         Elastic power loss computed with noexcept backend (J/s/m3)
+         .. versionadded:: 3.2
+         """
+         def __get__(self):
+             if not self._enable_plasma:
+                 raise ThermoModelMethodError(self.thermo_model)
+             return self.plasma.elasticPowerLoss_noexcept()
+
+    def electron_collision_energy_losses(self):
+        """Return per electron-collision reaction power terms for the current state.
+
+        The returned dictionary contains parallel lists of length `nCollisions()`:
+
+        - ``kinds``: optional YAML-provided kind label for each collision
+        - ``targets``: optional YAML-provided target label
+        - ``products``: optional YAML-provided product label
+        - ``thresholds_eV``: threshold energy U for each collision [eV]
+        - ``elastic_W_m3``: elastic (and recoil) power loss contribution [W/m^3]
+        - ``inelastic_W_m3``: inelastic power loss contribution [W/m^3]
+
+        Notes
+        -----
+        ``inelastic_W_m3`` is computed using the forward electron-collision rate
+        coefficient and the threshold energy (first cross-section energy level).
+        """
+        if not self._enable_plasma:
+            raise ThermoModelMethodError(self.thermo_model)
+
+        cdef vector[double] pel = self.plasma.electronCollisionElasticPowers()
+        cdef vector[double] pin = self.plasma.electronCollisionInelasticPowers()
+        cdef vector[string] kinds = self.plasma.electronCollisionKinds()
+        cdef vector[string] targets = self.plasma.electronCollisionTargets()
+        cdef vector[string] products = self.plasma.electronCollisionProducts()
+        cdef vector[double] thr = self.plasma.electronCollisionThresholds()
+
+        cdef size_t n = pel.size()
+        out_kinds = []
+        out_targets = []
+        out_products = []
+        out_thr = []
+        out_pel = []
+        out_pin = []
+        cdef size_t i
+        for i in range(n):
+            out_kinds.append(pystr(kinds[i]))
+            out_targets.append(pystr(targets[i]))
+            out_products.append(pystr(products[i]))
+            out_thr.append(thr[i])
+            out_pel.append(pel[i])
+            out_pin.append(pin[i])
+
+        return {
+            "kinds": out_kinds,
+            "targets": out_targets,
+            "products": out_products,
+            "thresholds_eV": out_thr,
+            "elastic_W_m3": out_pel,
+            "inelastic_W_m3": out_pin,
+        }
 
 cdef class InterfacePhase(ThermoPhase):
     """ A class representing a surface, edge phase """

@@ -123,9 +123,41 @@ cdef class ReactionPathDiagram:
         def __set__(self, str value):
             self.diagram.title = stringify(value)
 
-    def add(self, ReactionPathDiagram other):
-        """ Add fluxes from `other` to this diagram """
-        self.diagram.add(other._diagram)
+    def add(self, ReactionPathDiagram other, double weight=1.0):
+        """
+        Add fluxes from ``other`` to this diagram, optionally scaled by ``weight``.
+
+        When ``weight`` is 1.0 (the default), this is equivalent to a direct
+        summation of fluxes. Supplying a ``weight`` equal to a time step ``dt``
+        or spatial increment ``dx`` enables trapezoidal or rectangle-rule
+        integration over a simulation trajectory:
+
+        .. code-block:: python
+
+            # initial snapshot weighted by the first interval
+            diagram.build()
+            diagram.scale_flows(dt0)
+
+            # accumulate subsequent snapshots
+            for dt in steps:
+                d = cantera.ReactionPathDiagram(gas, element)
+                d.build()
+                diagram.add(d, dt)
+        """
+        self.diagram.add(other._diagram, weight)
+
+    def scale_flows(self, double factor):
+        """
+        Scale all flows in this diagram by ``factor``.
+
+        Use this to weight the initial diagram before accumulating subsequent
+        steps with :meth:`add`. For example, to apply a rectangular-rule
+        integration weight ``dt0`` to the initial snapshot::
+
+            diagram.build()
+            diagram.scale_flows(dt0)
+        """
+        self.diagram.scaleFlows(factor)
 
     def display_only(self, int k):
         """

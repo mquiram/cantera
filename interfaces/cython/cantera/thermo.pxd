@@ -216,6 +216,15 @@ cdef extern from "cantera/thermo/PlasmaPhase.h":
         double electricField()
         void updateElectronEnergyDistribution()
         double elasticPowerLoss() except +translate_exception
+        double jouleHeatingPower_noexcept() noexcept
+        double elasticPowerLoss_noexcept() noexcept
+        double electronMobility() except +translate_exception
+        vector[double] electronCollisionElasticPowers() except +translate_exception
+        vector[double] electronCollisionInelasticPowers() except +translate_exception
+        vector[string] electronCollisionKinds() except +translate_exception
+        vector[string] electronCollisionTargets() except +translate_exception
+        vector[string] electronCollisionProducts() except +translate_exception
+        vector[double] electronCollisionThresholds() except +translate_exception
 
 
 cdef extern from "cantera/cython/thermo_utils.h":

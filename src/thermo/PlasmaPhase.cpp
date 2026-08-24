@@ -716,18 +716,25 @@ void PlasmaPhase::setParameters(const AnyMap& phaseNode, const AnyMap& rootNode)
                         }
                         productListStr += "}";
 
-                        std::string kind = "excitation"; // Default type
-                        if (productSpeciesList.size() == 1 && productSpeciesList[0] == targetSpecies) {
-                            kind = "effective";  // Elastic collision (momentum transfer)
-                        } else {
-                            for (const auto& p : productSpeciesList) {
-                                if (p.back() == '+') {
-                                    kind = "ionization";
-                                    break;
-                                }
-                                if (p.back() == '-') {
-                                    kind = "attachment";
-                                    break;
+                        std::string kind = collisionItem.getString("kind", "");
+                        if (kind.empty() || kind == "unknown") {
+                            kind = "excitation"; // Default type
+                            if (productSpeciesList.size() == 1 &&
+                                productSpeciesList[0] == targetSpecies) {
+                                // Same target/product means a momentum-transfer/effective
+                                // transport cross section, not necessarily a true elastic
+                                // recoil cross section.
+                                kind = "effective";
+                            } else {
+                                for (const auto& p : productSpeciesList) {
+                                    if (p.back() == '+') {
+                                        kind = "ionization";
+                                        break;
+                                    }
+                                    if (p.back() == '-') {
+                                        kind = "attachment";
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -808,14 +815,20 @@ bool PlasmaPhase::addElectronCrossSection(shared_ptr<ElectronCrossSection> ecs)
 
     if (ecs->kind == "effective" || ecs->kind == "elastic") {
         for (size_t k = 0; k < m_ncs; k++) {
-            if (target(k) == ecs->target)
-                if (kind(k) == "elastic" || kind(k) == "effective") {
-                    throw CanteraError("PlasmaPhase::addElectronCrossSection"
-                                       "Already contains a data of effective/ELASTIC cross section for '{}'.",
-                                       ecs->target);
+            if (target(k) == ecs->target && kind(k) == ecs->kind) {
+                throw CanteraError("PlasmaPhase::addElectronCrossSection",
+                                   "Already contains a '{}' cross section for '{}'.",
+                                   ecs->kind, ecs->target);
             }
         }
-        m_kElastic.push_back(m_ncs);
+
+        // Effective cross sections are transport totals (elastic + inelastic),
+        // not true elastic recoil cross sections. Keep only true elastic data in
+        // m_kElastic; EEDFTwoTermApproximation handles effective cross sections
+        // separately when constructing the transport total.
+        if (ecs->kind == "elastic") {
+            m_kElastic.push_back(m_ncs);
+        }
     } else {
         m_kInelastic.push_back(m_ncs);
     }
@@ -1154,6 +1167,112 @@ double PlasmaPhase::elasticPowerLoss()
         concentration(m_electronSpeciesIndex) * rate;
 }
 
+vector<double> PlasmaPhase::electronCollisionElasticPowers()
+{
+    updateElasticElectronEnergyLossCoefficients();
+
+    vector<double> powers(nCollisions(), 0.0);
+    if (nCollisions() == 0) {
+        return powers;
+    }
+
+    const double Ce = concentration(m_electronSpeciesIndex); // kmol/m^3
+    const double pref = Avogadro * Avogadro * ElectronCharge * Ce;
+
+    for (size_t i = 0; i < nCollisions(); i++) {
+        const double Ct = concentration(m_targetSpeciesIndices[i]); // kmol/m^3
+        powers[i] = pref * Ct * m_elasticElectronEnergyLossCoefficients[i];
+    }
+    return powers;
+}
+
+vector<double> PlasmaPhase::electronCollisionInelasticPowers()
+{
+    vector<double> powers(nCollisions(), 0.0);
+    if (nCollisions() == 0) {
+        return powers;
+    }
+
+    auto soln = m_soln.lock();
+    if (!soln) {
+        return powers;
+    }
+    auto kin = soln->kinetics();
+    if (!kin) {
+        return powers;
+    }
+
+    // Populate shared EEDF data on the current energy grid
+    ElectronCollisionPlasmaData shared_data;
+    shared_data.update(*this, *kin);
+
+    const double Ce = concentration(m_electronSpeciesIndex); // kmol/m^3
+
+    for (size_t i = 0; i < nCollisions(); i++) {
+        const double Ct = concentration(m_targetSpeciesIndices[i]); // kmol/m^3
+
+        // Forward rate coefficient [m^3/kmol/s]
+        const double kf = m_collisionRates[i]->evalFromStruct(shared_data);
+
+        // Threshold energy [eV] (first entry of the cross-section grid)
+        double U = 0.0;
+        const auto& levels = m_collisionRates[i]->energyLevels();
+        if (levels.size() > 0) {
+            U = levels[0];
+        }
+
+        // Rate of events [kmol/m^3/s]
+        const double r_kmol = kf * Ce * Ct;
+
+        // Convert to power [W/m^3] = (kmol/m^3/s) * (N_A events/kmol) * (U eV/event) * (e J/eV)
+        powers[i] = r_kmol * Avogadro * U * ElectronCharge;
+    }
+
+    return powers;
+}
+
+vector<string> PlasmaPhase::electronCollisionKinds() const
+{
+    vector<string> out;
+    out.reserve(nCollisions());
+    for (size_t i = 0; i < nCollisions(); i++) {
+        out.emplace_back(m_collisionRates[i]->kind());
+    }
+    return out;
+}
+
+vector<string> PlasmaPhase::electronCollisionTargets() const
+{
+    vector<string> out;
+    out.reserve(nCollisions());
+    for (size_t i = 0; i < nCollisions(); i++) {
+        out.emplace_back(m_collisionRates[i]->target());
+    }
+    return out;
+}
+
+vector<string> PlasmaPhase::electronCollisionProducts() const
+{
+    vector<string> out;
+    out.reserve(nCollisions());
+    for (size_t i = 0; i < nCollisions(); i++) {
+        out.emplace_back(m_collisionRates[i]->product());
+    }
+    return out;
+}
+
+vector<double> PlasmaPhase::electronCollisionThresholds() const
+{
+    vector<double> out(nCollisions(), 0.0);
+    for (size_t i = 0; i < nCollisions(); i++) {
+        const auto& levels = m_collisionRates[i]->energyLevels();
+        if (levels.size() > 0) {
+            out[i] = levels[0];
+        }
+    }
+    return out;
+}
+
 void PlasmaPhase::updateThermo() const
 {
     IdealGasPhase::updateThermo();
@@ -1195,12 +1314,20 @@ void PlasmaPhase::compute_nDensity() const {
     }
 }
 
-void PlasmaPhase::compute_electronMobility() const {
-    if (m_distributionType == "TwoTermApproximation") {
-        m_electronMobility = ptrEEDFSolver->getElectronMobility();
-    } else {
+void PlasmaPhase::compute_electronMobility() const
+{
+    if (m_distributionType != "TwoTermApproximation") {
         throw NotImplementedError("PlasmaPhase::compute_electronMobility");
     }
+
+    if (!(std::isfinite(EN()) && EN() > 0.0 &&
+          std::isfinite(N())  && N()  > 0.0) || !ptrEEDFSolver) {
+        m_electronMobility = 0.0;
+        return;
+    }
+
+    double mu = ptrEEDFSolver->getElectronMobility();
+    m_electronMobility = (std::isfinite(mu) && mu >= 0.0) ? mu : 0.0;
 }
 
 void PlasmaPhase::getVibrationalEnergies(double* const evib) const
@@ -1341,6 +1468,7 @@ double PlasmaPhase::jouleHeatingPower_noexcept() const noexcept
         }
 
         const double q = sigma * E_field * E_field;   // [W/m^3]
+        //writelog("jouleHeatingPower: sigma=%g, E_field=%g, q=%g\n", sigma, E_field, q);
         return (std::isfinite(q) && q > 0.0) ? q : 0.0;
 
     } catch (...) {

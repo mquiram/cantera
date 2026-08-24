@@ -15,6 +15,153 @@
 namespace Cantera
 {
 
+namespace {
+
+double transportNu(double nu_raw)
+{
+    if (!std::isfinite(nu_raw) || nu_raw <= 0.0) {
+        return 0.0;
+    }
+    return nu_raw;
+}
+
+
+bool isEffectiveCrossSection(const string& kind)
+{
+    return kind == "effective";
+}
+
+bool isElasticCrossSection(const string& kind)
+{
+    return kind == "elastic";
+}
+
+bool isTransportOnlyCrossSection(const string& kind)
+{
+    return isEffectiveCrossSection(kind);
+}
+
+bool isInelasticCrossSection(const string& kind)
+{
+    return !isElasticCrossSection(kind) && !isEffectiveCrossSection(kind);
+}
+
+bool targetHasCrossSectionKind(PlasmaPhase* phase, const string& target,
+                               const string& kind)
+{
+    for (size_t k = 0; k < phase->nElectronCrossSections(); k++) {
+        if (phase->target(k) == target && phase->kind(k) == kind) {
+            return true;
+        }
+    }
+    return false;
+}
+
+double crossSectionAt(PlasmaPhase* phase, size_t k, double energy)
+{
+    vector_fp x = phase->energyLevels()[k];
+    vector_fp y = phase->crossSections()[k];
+    return linearInterp(energy, x, y);
+}
+
+// Temporary diagnostics controls
+constexpr bool kRejectBadEEDF = true;   // keep false for now
+constexpr bool kDumpBadEEDF   = true;
+constexpr double kNuDumpThreshold = 1e8;
+constexpr size_t kMaxSlopeBinsToPrint = 8;
+constexpr bool kRepairLowEnergySpike = true;
+constexpr int kLowEBinsToRepair = 6;
+constexpr double kLowEMaxEV = 1.0;
+constexpr double kSpikeRatioHard = 1e6;
+constexpr double kSpikeRatioEarly = 10.0;
+constexpr double kSpikeAbs = 1e-12;
+constexpr bool kRetryOnLowESpike = true;
+constexpr double kRetryDeltaScale = 0.25;
+
+bool detectLowEnergySpike(const Eigen::VectorXd& f0,
+                          const Eigen::VectorXd& grid,
+                          int& bad_i,
+                          double& left,
+                          double& right,
+                          double& ratio)
+{
+    bad_i = -1;
+    left = 0.0;
+    right = 0.0;
+    ratio = 1.0;
+
+    for (int i = 1; i < f0.size() && i <= kLowEBinsToRepair; ++i) {
+        if (!std::isfinite(grid[i]) || grid[i] > kLowEMaxEV) {
+            break;
+        }
+
+        double fL = std::max(f0(i-1), 1e-300);
+        double fR = std::max(f0(i),   1e-300);
+        double r = fR / fL;
+
+        bool severe = (r > kSpikeRatioHard && fR > kSpikeAbs);
+        bool suspiciousEarly = (i <= 2 && r > kSpikeRatioEarly && fR > kSpikeAbs);
+
+        if ((fR > fL) && (severe || suspiciousEarly)) {
+            bad_i = i;
+            left = fL;
+            right = fR;
+            ratio = r;
+            return true;
+        }
+    }
+    return false;
+}
+
+
+void repairLowEnergySpike(Eigen::VectorXd& f0,
+                          const Eigen::VectorXd& f0_prev,
+                          const Eigen::VectorXd& grid)
+{
+    for (int i = 0; i < f0.size() && i <= kLowEBinsToRepair; ++i) {
+        if (!std::isfinite(grid[i]) || grid[i] > kLowEMaxEV) {
+            break;
+        }
+        f0(i) = f0_prev(i);
+    }
+}
+
+size_t countPositiveSlopes(const Eigen::VectorXd& f0, const Eigen::VectorXd& grid)
+{
+    size_t npos = 0;
+    for (int i = 1; i < f0.size(); ++i) {
+        double dx = grid[i] - grid[i-1];
+        if (!std::isfinite(dx) || dx <= 0.0) {
+            continue;
+        }
+        double df0 = (f0(i) - f0(i-1)) / dx;
+        if (df0 > 0.0) {
+            npos++;
+        }
+    }
+    return npos;
+}
+
+void logPositiveSlopeBins(const Eigen::VectorXd& f0, const Eigen::VectorXd& grid)
+{
+    size_t shown = 0;
+    for (int i = 1; i < f0.size() && shown < kMaxSlopeBinsToPrint; ++i) {
+        double dx = grid[i] - grid[i-1];
+        if (!std::isfinite(dx) || dx <= 0.0) {
+            continue;
+        }
+        double df0 = (f0(i) - f0(i-1)) / dx;
+        if (df0 > 0.0) {
+            writelog("[bad-eedf] pos-slope bin i={} epsL={:.6e} epsR={:.6e} "
+                     "fL={:.6e} fR={:.6e} df0={:.6e}\n",
+                     i, grid[i-1], grid[i], f0(i-1), f0(i), df0);
+            shown++;
+        }
+    }
+}
+
+}
+
 EEDFTwoTermApproximation::EEDFTwoTermApproximation(PlasmaPhase& s)
 {
     initialize(s);
@@ -46,31 +193,20 @@ void EEDFTwoTermApproximation::setLinearGrid(double& kTe_max, size_t& ncell)
 
 int EEDFTwoTermApproximation::calculateDistributionFunction()
 {
-    if (m_first_call)
-    {
-
-        for (size_t k = 0; k < m_phase->nElectronCrossSections(); k++) {
-
-            std::string target = m_phase->target(k);
-            std::vector<std::string> products = m_phase->products(k);
-
-            // Print all identified products
-            std::string productListStr = "{ ";
-            for (const auto& p : products) {
-                productListStr += p + " ";
-            }
-            productListStr += "}";
-
+    if (m_first_call) {
         initSpeciesIndexCS();
         m_first_call = false;
-        }
-    } else {
-
     }
 
     update_mole_fractions();
     checkSpeciesNoCrossSection();
     updateCS();
+
+    // Save previous good state
+    Eigen::VectorXd f0_prev = m_f0;
+    vector_fp f0_edge_prev = m_f0_edge;
+    double mu_prev = m_electronMobility;
+    bool had_prev = m_has_EEDF;
 
     if (!m_has_EEDF) {
         writelog("No existing EEDF. Using first guess method: {}\n", options.m_firstguess);
@@ -82,11 +218,47 @@ int EEDFTwoTermApproximation::calculateDistributionFunction()
             }
         } else {
             throw CanteraError("EEDFTwoTermApproximation::calculateDistributionFunction",
-                               " unknown EEDF first guess");
+                               "unknown EEDF first guess");
         }
     }
 
     converge(m_f0);
+
+    if (kRetryOnLowESpike && had_prev) {
+        int bad_i = -1;
+        double left = 0.0, right = 0.0, ratio = 1.0;
+
+        if (detectLowEnergySpike(m_f0, m_gridCenter, bad_i, left, right, ratio)) {
+            writelog("[lowE-retry] detected spike at i={} epsL={:.6e} epsR={:.6e} "
+                     "fL={:.6e} fR={:.6e} ratio={:.6e}; retrying solve from previous EEDF\n",
+                     bad_i, m_gridCenter[bad_i - 1], m_gridCenter[bad_i],
+                     left, right, ratio);
+
+            // restart from previous good EEDF
+            m_f0 = f0_prev;
+
+            double delta_save = options.m_delta0;
+            options.m_delta0 *= kRetryDeltaScale;
+            converge(m_f0);
+            options.m_delta0 = delta_save;
+        }
+    }
+
+    if (kRepairLowEnergySpike && had_prev) {
+        int bad_i = -1;
+        double left = 0.0, right = 0.0, ratio = 1.0;
+
+        if (detectLowEnergySpike(m_f0, m_gridCenter, bad_i, left, right, ratio)) {
+            writelog("[lowE-repair] detected spike at i={} epsL={:.6e} epsR={:.6e} "
+                     "fL={:.6e} fR={:.6e} ratio={:.6e}; restoring low-energy bins "
+                     "from previous EEDF\n",
+                     bad_i, m_gridCenter[bad_i - 1], m_gridCenter[bad_i],
+                     left, right, ratio);
+
+            repairLowEnergySpike(m_f0, f0_prev, m_gridCenter);
+            m_f0 /= norm(m_f0, m_gridCenter);
+        }
+    }
 
     // write the EEDF at grid edges
     vector<double> f(m_f0.data(), m_f0.data() + m_f0.rows() * m_f0.cols());
@@ -95,13 +267,58 @@ int EEDFTwoTermApproximation::calculateDistributionFunction()
         m_f0_edge[i] = linearInterp(m_gridEdge[i], x, f);
     }
 
+    double nu_raw = netProductionFreq(m_f0);
+    double mu_new = electronMobility(m_f0);
+    size_t df0_pos = countPositiveSlopes(m_f0, m_gridCenter);
+
+    bool bad_state = (!std::isfinite(mu_new) || mu_new < 0.0 ||
+                      !std::isfinite(nu_raw) || std::abs(nu_raw) > kNuDumpThreshold ||
+                      df0_pos > 0);
+
+    if (kDumpBadEEDF && bad_state) {
+        //writelog("[bad-eedf] mu_new={:.6e}, nu_raw={:.6e}, df0_pos={}\n",
+        //         mu_new, nu_raw, df0_pos);
+        //logPositiveSlopeBins(m_f0, m_gridCenter);
+
+        // Per-reaction nu breakdown
+        vector_fp g = vector_g(m_f0);
+        for (size_t k = 0; k < m_phase->nElectronCrossSections(); k++) {
+            if (m_phase->kind(k) == "ionization" || m_phase->kind(k) == "attachment") {
+                SparseMat_fp PQ = (matrix_Q(g, k) - matrix_P(g, k)) *
+                                  m_X_targets[m_klocTargets[k]];
+                Eigen::VectorXd s = PQ * m_f0;
+
+                double nu_k = 0.0;
+                for (size_t i = 0; i < options.m_points; i++) {
+                    nu_k += s[i];
+                }
+
+                /* if (std::isfinite(nu_k) && std::abs(nu_k) > 1e-20) {
+                    writelog("[nu-breakdown] k={} kind={} target={} threshold={:.6e} "
+                             "X_target={:.6e} contrib={:.6e}\n",
+                             k, m_phase->kind(k), m_phase->target(k),
+                             m_phase->threshold(k),
+                             m_X_targets[m_klocTargets[k]], nu_k);
+                } */
+            }
+        }
+    }
+
+    if (kRejectBadEEDF && (!std::isfinite(mu_new) || mu_new < 0.0)) {
+        writelog("[mu] rejecting EEDF update: mu_new={:.6e}; keeping previous EEDF\n", mu_new);
+        if (had_prev) {
+            m_f0 = f0_prev;
+            m_f0_edge = f0_edge_prev;
+            m_electronMobility = (std::isfinite(mu_prev) && mu_prev > 0.0) ? mu_prev : 0.0;
+            return 0;
+        } else {
+            mu_new = 0.0;
+        }
+    }
+
     m_has_EEDF = true;
-
-    // update electron mobility
-    m_electronMobility = electronMobility(m_f0);
-
+    m_electronMobility = mu_new;
     return 0;
-
 }
 
 void EEDFTwoTermApproximation::converge(Eigen::VectorXd& f0)
@@ -366,7 +583,8 @@ SparseMat_fp EEDFTwoTermApproximation::matrix_A(const Eigen::VectorXd& f0)
     vector_fp a1(options.m_points + 1);
     size_t N = options.m_points - 1;
     // Scharfetter-Gummel scheme
-    double nu = netProductionFreq(f0);
+    double nu_raw = netProductionFreq(f0);
+    double nu_transport = transportNu(nu_raw);
     a0[0] = NAN;
     a1[0] = NAN;
     a0[N+1] = NAN;
@@ -383,7 +601,12 @@ SparseMat_fp EEDFTwoTermApproximation::matrix_A(const Eigen::VectorXd& f0)
     if (options.m_growth == "spatial") {
         double mu = electronMobility(f0);
         double D = electronDiffusivity(f0);
-        alpha = (mu * m_phase->E() - sqrt(pow(mu * m_phase->E(), 2) - 4 * D * nu * m_phase->N())) / 2.0 / D / m_phase->N();
+        double disc = pow(mu * m_phase->E(), 2) - 4 * D * nu_raw * m_phase->N();
+        if (!std::isfinite(disc) || disc < 0.0) {
+            disc = 0.0;
+        }
+        double Dsafe = (std::isfinite(D) && std::abs(D) > 1e-300) ? D : 1e-300;
+        alpha = (mu * m_phase->E() - sqrt(disc)) / 2.0 / Dsafe / m_phase->N();
     } else {
         alpha = 0.0;
     }
@@ -392,7 +615,10 @@ SparseMat_fp EEDFTwoTermApproximation::matrix_A(const Eigen::VectorXd& f0)
     double omega = 2 * Pi * m_phase->F();
     for (size_t j = 1; j < options.m_points; j++) {
         if (options.m_growth == "temporal") {
-            sigma_tilde = m_totalCrossSectionEdge[j] + nu / pow(m_gridEdge[j], 0.5) / m_gamma;
+            sigma_tilde = m_totalCrossSectionEdge[j] + nu_transport / pow(m_gridEdge[j], 0.5) / m_gamma;
+            if (!std::isfinite(sigma_tilde) || sigma_tilde <= 1e-300) {
+                sigma_tilde = 1e-300;
+            }
         }
         else {
             sigma_tilde = m_totalCrossSectionEdge[j];
@@ -462,7 +688,7 @@ SparseMat_fp EEDFTwoTermApproximation::matrix_A(const Eigen::VectorXd& f0)
     SparseMat_fp G(options.m_points, options.m_points);
     if (options.m_growth == "temporal") {
         for (size_t i = 0; i < options.m_points; i++) {
-            G.insert(i, i) = 2.0 / 3.0 * (pow(m_gridEdge[i+1], 1.5) - pow(m_gridEdge[i], 1.5)) * nu;
+            G.insert(i, i) = 2.0 / 3.0 * (pow(m_gridEdge[i+1], 1.5) - pow(m_gridEdge[i], 1.5)) * nu_raw;
         }
     }
     else if (options.m_growth == "spatial") {
@@ -502,33 +728,80 @@ double EEDFTwoTermApproximation::netProductionFreq(const Eigen::VectorXd& f0)
 double EEDFTwoTermApproximation::electronDiffusivity(const Eigen::VectorXd& f0)
 {
     vector_fp y(options.m_points, 0.0);
-    double nu = netProductionFreq(f0);
+    double nu_raw = netProductionFreq(f0);
+    double nu_transport = transportNu(nu_raw);
+
     for (size_t i = 0; i < options.m_points; i++) {
         if (m_gridCenter[i] != 0.0) {
-            y[i] = m_gridCenter[i] * f0(i) /
-                   (m_totalCrossSectionCenter[i] + nu / m_gamma / pow(m_gridCenter[i], 0.5));
+            double denom = m_totalCrossSectionCenter[i]
+                + nu_transport / m_gamma / pow(m_gridCenter[i], 0.5);
+
+            if (std::isfinite(denom) && denom > 1e-300) {
+                y[i] = m_gridCenter[i] * f0(i) / denom;
+            } else {
+                y[i] = 0.0;
+            }
         }
     }
+
     auto f = Eigen::Map<const Eigen::ArrayXd>(y.data(), y.size());
     auto x = Eigen::Map<const Eigen::ArrayXd>(m_gridCenter.data(), m_gridCenter.size());
-    return 1./3. * m_gamma * simpson(f, x) / m_phase->N();
+    double D = 1./3. * m_gamma * simpson(f, x) / m_phase->N();
+
+    if (!std::isfinite(D) || D < 0.0) {
+        return 0.0;
+    }
+    return D;
 }
 
 double EEDFTwoTermApproximation::electronMobility(const Eigen::VectorXd& f0)
 {
-    double nu = netProductionFreq(f0);
+    double nu_raw = netProductionFreq(f0);
+    double nu_transport = transportNu(nu_raw);
     vector_fp y(options.m_points + 1, 0.0);
+
+    double denom_min = 1e300, denom_max = -1e300;
+    size_t denom_nonpos = 0;
+    double df0_min = 1e300, df0_max = -1e300;
+    size_t df0_pos = 0;
+
     for (size_t i = 1; i < options.m_points; i++) {
-        // calculate df0 at i-1/2
         double df0 = (f0(i) - f0(i-1)) / (m_gridCenter[i] - m_gridCenter[i-1]);
+        df0_min = std::min(df0_min, df0);
+        df0_max = std::max(df0_max, df0);
+        if (df0 > 0.0) {
+            df0_pos++;
+        }
+
         if (m_gridEdge[i] != 0.0) {
-            y[i] = m_gridEdge[i] * df0 /
-                   (m_totalCrossSectionEdge[i] + nu / m_gamma / pow(m_gridEdge[i], 0.5));
+            double denom = m_totalCrossSectionEdge[i]
+                + nu_transport / m_gamma / pow(m_gridEdge[i], 0.5);
+
+            denom_min = std::min(denom_min, denom);
+            denom_max = std::max(denom_max, denom);
+            if (!(denom > 0.0)) {
+                denom_nonpos++;
+            }
+
+            if (std::isfinite(denom) && denom > 1e-300) {
+                y[i] = m_gridEdge[i] * df0 / denom;
+            } else {
+                y[i] = 0.0;
+            }
         }
     }
+
     auto f = Eigen::Map<const Eigen::ArrayXd>(y.data(), y.size());
     auto x = Eigen::Map<const Eigen::ArrayXd>(m_gridEdge.data(), m_gridEdge.size());
-    return -1./3. * m_gamma * simpson(f, x) / m_phase->N();
+    double mu = -1./3. * m_gamma * simpson(f, x) / m_phase->N();
+
+    /* writelog("[mu] nu_raw={:.6e}, nu_transport={:.6e}, denom_min={:.6e}, "
+             "denom_max={:.6e}, denom_nonpos={}, df0_min={:.6e}, "
+             "df0_max={:.6e}, df0_pos={}, mu={:.6e}\n",
+             nu_raw, nu_transport, denom_min, denom_max, denom_nonpos,
+             df0_min, df0_max, df0_pos, mu); */
+
+    return mu;
 }
 
 void EEDFTwoTermApproximation::initSpeciesIndexCS()
@@ -614,27 +887,30 @@ void EEDFTwoTermApproximation::update_mole_fractions()
 
 void EEDFTwoTermApproximation::calculateTotalCrossSection()
 {
-
     m_totalCrossSectionCenter.assign(options.m_points, 0.0);
     m_totalCrossSectionEdge.assign(options.m_points + 1, 0.0);
+
     for (size_t k = 0; k < m_phase->nElectronCrossSections(); k++) {
+        const string kind = m_phase->kind(k);
+        const string target = m_phase->target(k);
+
+        // LXCat-style "effective" cross sections are already the momentum-
+        // transfer/effective total for that target (elastic + inelastic). If an
+        // effective cross section is present, do not add the target's explicit
+        // inelastic channels again; otherwise the high-energy EEDF is
+        // over-damped by double-counting inelastic scattering.
+        const bool hasEffective =
+            targetHasCrossSectionKind(m_phase, target, "effective");
+        if (hasEffective && !isTransportOnlyCrossSection(kind)) {
+            continue;
+        }
+
         vector_fp x = m_phase->energyLevels()[k];
         vector_fp y = m_phase->crossSections()[k];
 
-        std::vector<std::string> products = m_phase->products(k);  // Retrieve all products
-
-        // Format product list as a string
-        std::string productListStr = "{ ";
-        for (const auto& p : products) {
-            productListStr += p + " ";
-        }
-        productListStr += "}";
-
         for (size_t i = 0; i < options.m_points; i++) {
-            //double cs_value = linearInterp(m_gridCenter[i], x, y);
             m_totalCrossSectionCenter[i] += m_X_targets[m_klocTargets[k]] *
                                             linearInterp(m_gridCenter[i], x, y);
-
         }
         for (size_t i = 0; i < options.m_points + 1; i++) {
             m_totalCrossSectionEdge[i] += m_X_targets[m_klocTargets[k]] *
@@ -645,17 +921,65 @@ void EEDFTwoTermApproximation::calculateTotalCrossSection()
 
 void EEDFTwoTermApproximation::calculateTotalElasticCrossSection()
 {
-    m_sigmaElastic.clear();
-    m_sigmaElastic.resize(options.m_points, 0.0);
-    for (size_t k : m_phase->kElastic()) {
-        vector_fp x = m_phase->energyLevels()[k];
-        vector_fp y = m_phase->crossSections()[k];
+    m_sigmaElastic.assign(options.m_points, 0.0);
+
+    // m_sigmaElastic is the elastic recoil / gas-temperature relaxation term,
+    // so it should use a true elastic cross section when one is available. An
+    // "effective" cross section is only used as a fallback estimate after
+    // subtracting the target's explicitly provided inelastic channels.
+    vector<string> processedTargets;
+    const size_t none = static_cast<size_t>(-1);
+
+    for (size_t k = 0; k < m_phase->nElectronCrossSections(); k++) {
+        const string target = m_phase->target(k);
+        if (std::find(processedTargets.begin(), processedTargets.end(), target)
+            != processedTargets.end()) {
+            continue;
+        }
+        processedTargets.push_back(target);
+
+        size_t elasticIndex = none;
+        size_t effectiveIndex = none;
+        for (size_t j = 0; j < m_phase->nElectronCrossSections(); j++) {
+            if (m_phase->target(j) != target) {
+                continue;
+            }
+            if (isElasticCrossSection(m_phase->kind(j))) {
+                elasticIndex = j;
+            } else if (isEffectiveCrossSection(m_phase->kind(j))) {
+                effectiveIndex = j;
+            }
+        }
+
+        const bool usingEffectiveFallback =
+            elasticIndex == none && effectiveIndex != none;
+        const size_t sourceIndex = elasticIndex != none ? elasticIndex : effectiveIndex;
+        if (sourceIndex == none) {
+            continue;
+        }
+
         // Note:
         // moleFraction(m_kTargets[k]) <=> m_X_targets[m_klocTargets[k]]
-        double mass_ratio = ElectronMass / (m_phase->molecularWeight(m_kTargets[k]) / Avogadro);
+        double mass_ratio = ElectronMass /
+            (m_phase->molecularWeight(m_kTargets[sourceIndex]) / Avogadro);
+
         for (size_t i = 0; i < options.m_points; i++) {
-            m_sigmaElastic[i] += 2.0 * mass_ratio * m_X_targets[m_klocTargets[k]] *
-                                 linearInterp(m_gridEdge[i], x, y);
+            double sigmaElastic = crossSectionAt(m_phase, sourceIndex, m_gridEdge[i]);
+
+            if (usingEffectiveFallback) {
+                double sigmaInelastic = 0.0;
+                for (size_t j = 0; j < m_phase->nElectronCrossSections(); j++) {
+                    if (m_phase->target(j) == target &&
+                        isInelasticCrossSection(m_phase->kind(j))) {
+                        sigmaInelastic += crossSectionAt(m_phase, j, m_gridEdge[i]);
+                    }
+                }
+                sigmaElastic = std::max(0.0, sigmaElastic - sigmaInelastic);
+            }
+
+            m_sigmaElastic[i] += 2.0 * mass_ratio *
+                                 m_X_targets[m_klocTargets[sourceIndex]] *
+                                 sigmaElastic;
         }
     }
 }

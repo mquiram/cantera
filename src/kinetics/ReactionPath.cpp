@@ -57,6 +57,30 @@ void Path::addReaction(size_t rxnNumber, double value, const string& label)
     }
 }
 
+void Path::scaleFlows(double factor)
+{
+    m_total *= factor;
+    for (auto& [rxn, val] : m_rxn) {
+        val *= factor;
+    }
+    for (auto& [label, val] : m_label) {
+        val *= factor;
+    }
+}
+
+void Path::add(const Path& other, double factor)
+{
+    m_total += factor * other.m_total;
+
+    for (const auto& [rxn, val] : other.m_rxn) {
+        m_rxn[rxn] += factor * val;
+    }
+
+    for (const auto& [label, val] : other.m_label) {
+        m_label[label] += factor * val;
+    }
+}
+
 void Path::writeLabel(ostream& s, double threshold)
 {
     if (m_label.size() == 0) {
@@ -129,17 +153,56 @@ vector<int> ReactionPathDiagram::reactions()
 
 void ReactionPathDiagram::add(ReactionPathDiagram& d)
 {
-    for (size_t n = 0; n < nPaths(); n++) {
-        Path* p = path(n);
-        size_t k1 = p->begin()->number;
-        size_t k2 = p->end()->number;
-        p->setFlow(p->flow() + d.flow(k1,k2));
-    }
+    add(d, 1.0);
 }
 
 void ReactionPathDiagram::add(shared_ptr<ReactionPathDiagram> d)
 {
-    add(*d.get());
+    add(*d.get(), 1.0);
+}
+
+void ReactionPathDiagram::add(ReactionPathDiagram& d, double weight)
+{
+    for (size_t n = 0; n < d.nPaths(); n++) {
+        Path* src = d.path(n);
+        size_t k1 = src->begin()->number;
+        size_t k2 = src->end()->number;
+
+        if (!hasNode(k1)) {
+            addNode(k1, src->begin()->name, src->begin()->value);
+        }
+        if (!hasNode(k2)) {
+            addNode(k2, src->end()->name, src->end()->value);
+        }
+
+        Path* dst = m_paths[k1][k2];
+        if (!dst) {
+            dst = new Path(m_nodes[k1], m_nodes[k2]);
+            m_paths[k1][k2] = dst;
+            m_pathlist.push_back(dst);
+        }
+
+        dst->add(*src, weight);
+
+        for (const auto& [rxn, flux] : src->reactionMap()) {
+            m_rxns.insert(rxn);
+        }
+
+        m_flxmax = std::max(m_flxmax, dst->flow());
+    }
+}
+
+void ReactionPathDiagram::add(shared_ptr<ReactionPathDiagram> d, double weight)
+{
+    add(*d.get(), weight);
+}
+
+void ReactionPathDiagram::scaleFlows(double factor)
+{
+    for (size_t n = 0; n < nPaths(); n++) {
+        path(n)->scaleFlows(factor);
+    }
+    m_flxmax *= factor;
 }
 
 void ReactionPathDiagram::findMajorPaths(double athreshold, size_t lda, double* a)
@@ -734,15 +797,76 @@ string reactionLabel(size_t i, size_t kr, size_t nr,
     return label;
 }
 
+bool ReactionPathBuilder::isPureElectronSpecies(size_t k, size_t mElectron) const
+{
+    if (m_atoms(k, mElectron) == 0) {
+        return false;
+    }
+
+    for (size_t m = 0; m < m_nel; m++) {
+        if (m != mElectron && m_atoms(k, m) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ReactionPathBuilder::isExcitedSpeciesName(const string& name) const
+{
+    return name.find('(') != string::npos && name.find(')') != string::npos;
+}
+
+bool ReactionPathBuilder::isChargedSpeciesName(const string& name) const
+{
+    return name == "e" || name == "E" || name == "Electron"
+        || name.find('+') != string::npos
+        || name.find('-') != string::npos;
+}
+
+bool ReactionPathBuilder::isPlasmaSpeciesName(const string& name) const
+{
+    return isExcitedSpeciesName(name) || isChargedSpeciesName(name);
+}
+
+string ReactionPathBuilder::reactionClassLabel(Kinetics& s, size_t i, size_t mElectron) const
+{
+    const string& type = s.reaction(i)->type();
+    if (ba::starts_with(type, "electron-collision-plasma")
+            || ba::starts_with(type, "two-temperature-plasma")) {
+        return "plasma";
+    }
+
+    for (size_t k = 0; k < m_ns; k++) {
+        if (s.reactantStoichCoeff(k, i) == 0.0 && s.productStoichCoeff(k, i) == 0.0) {
+            continue;
+        }
+
+        if (mElectron != npos && isPureElectronSpecies(k, mElectron)) {
+            return "plasma";
+        }
+
+        if (isPlasmaSpeciesName(s.kineticsSpeciesName(k))) {
+            return "plasma";
+        }
+    }
+    return "neutral";
+}
+
 int ReactionPathBuilder::build(Kinetics& s, const string& element,
                                ostream& output, ReactionPathDiagram& r, bool quiet)
 {
     map<size_t, int> warn;
     double threshold = 0.0;
-    size_t m = m_enamemap[element]-1;
+    auto it = m_enamemap.find(element);
     r.element = element;
-    if (m == npos) {
+    if (it == m_enamemap.end()) {
         return -1;
+    }
+    size_t m = it->second - 1;
+    size_t mElectron = npos;
+    auto itElectron = m_enamemap.find("E");
+    if (itElectron != m_enamemap.end()) {
+        mElectron = itElectron->second - 1;
     }
 
     s.getFwdRatesOfProgress(m_ropf.data());
@@ -760,9 +884,151 @@ int ReactionPathBuilder::build(Kinetics& s, const string& element,
         status[s.kineticsSpeciesIndex(out_nodes[ne])] = -1;
     }
 
+    bool electron_mode = (element == "E" && r.special_electron_mode);
+
+    vector<size_t> freeElectrons;
+    if (electron_mode) {
+        for (size_t k = 0; k < m_ns; k++) {
+            if (isPureElectronSpecies(k, m)) {
+                freeElectrons.push_back(k);
+            }
+        }
+    }
+
     for (size_t i = 0; i < m_nr; i++) {
         double ropf = m_ropf[i];
         double ropr = m_ropr[i];
+
+        bool electron_mode = (element == "E" && r.special_electron_mode);
+
+        for (size_t i = 0; i < m_nr; i++) {
+            double ropf = m_ropf[i];
+            double ropr = m_ropr[i];
+
+            bool is_e_collision = ba::starts_with(
+                s.reaction(i)->type(), "electron-collision-plasma");
+
+            if (electron_mode && is_e_collision) {
+                map<size_t, double> rawReac, rawProd;
+                double nFreeReac = 0.0;
+                double nFreeProd = 0.0;
+
+                for (size_t k = 0; k < m_ns; k++) {
+                    double nu_r = s.reactantStoichCoeff(k, i);
+                    double nu_p = s.productStoichCoeff(k, i);
+
+                    if (nu_r == 0.0 && nu_p == 0.0) {
+                        continue;
+                    }
+
+                    if (isPureElectronSpecies(k, m)) {
+                        nFreeReac += nu_r;
+                        nFreeProd += nu_p;
+                        continue;
+                    }
+
+                    if (nu_r > 0.0) {
+                        rawReac[k] = nu_r;
+                    }
+                    if (nu_p > 0.0) {
+                        rawProd[k] = nu_p;
+                    }
+                }
+
+                // Only keep true free-electron collision reactions
+                if (nFreeReac + nFreeProd == 0.0) {
+                    continue;
+                }
+
+                // Start from raw heavy-species stoich
+                map<size_t, double> pairReac = rawReac;
+                map<size_t, double> pairProd = rawProd;
+
+                // Cancel common heavy species first
+                for (auto& [k, nu_r] : pairReac) {
+                    auto itp = pairProd.find(k);
+                    if (itp != pairProd.end()) {
+                        double dc = std::min(nu_r, itp->second);
+                        nu_r -= dc;
+                        itp->second -= dc;
+                    }
+                }
+
+                for (auto it = pairReac.begin(); it != pairReac.end(); ) {
+                    if (it->second <= 0.0) {
+                        it = pairReac.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                for (auto it = pairProd.begin(); it != pairProd.end(); ) {
+                    if (it->second <= 0.0) {
+                        it = pairProd.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+
+                // If cancellation removes everything on one side, fall back to raw heavy
+                // stoich so that anchor species can still generate useful edges.
+                if (pairReac.empty() || pairProd.empty()) {
+                    pairReac = rawReac;
+                    pairProd = rawProd;
+                }
+
+                // Ignore pure elastic/no-heavy-change cases
+                double norm = 0.0;
+                for (const auto& [kkr, nu_r] : pairReac) {
+                    for (const auto& [kkp, nu_p] : pairProd) {
+                        if (kkr != kkp) {
+                            norm += nu_r * nu_p;
+                        }
+                    }
+                }
+                if (norm <= 0.0) {
+                    continue;
+                }
+
+                string classLabel = reactionClassLabel(s, i, mElectron);
+
+                for (const auto& [kkr, nu_r] : pairReac) {
+                    for (const auto& [kkp, nu_p] : pairProd) {
+                        if (kkr == kkp || status[kkr] < 0 || status[kkp] < 0) {
+                            continue;
+                        }
+
+                        double frac = (nu_r * nu_p) / norm;
+                        double fwd = ropf * frac;
+                        double rev = ropr * frac;
+                        bool force_incl = ((status[kkr] == 1) || (status[kkp] == 1));
+
+                        bool fwd_incl = ((fwd > threshold) ||
+                                        (fwd > 0.0 && force_incl));
+                        bool rev_incl = ((rev > threshold) ||
+                                        (rev > 0.0 && force_incl));
+
+                        if (fwd_incl || rev_incl) {
+                            if (!r.hasNode(kkr)) {
+                                r.addNode(kkr, s.kineticsSpeciesName(kkr), m_x[kkr]);
+                            }
+                            if (!r.hasNode(kkp)) {
+                                r.addNode(kkp, s.kineticsSpeciesName(kkp), m_x[kkp]);
+                            }
+                        }
+
+                        if (fwd_incl) {
+                            r.linkNodes(kkr, kkp, int(i), fwd, classLabel);
+                        }
+                        if (rev_incl) {
+                            r.linkNodes(kkp, kkr, -int(i), rev, classLabel);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // ... existing normal element-path logic ...
+        }
 
         // loop over reactions involving element m
         if (m_elatoms(m, i) > 0) {
@@ -771,21 +1037,10 @@ int ReactionPathBuilder::build(Kinetics& s, const string& element,
 
             for (size_t kr = 0; kr < nr; kr++) {
                 size_t kkr = m_reac[i][kr];
-                string fwdlabel = reactionLabel(i, kr, nr, m_reac[i], s);
+                string classLabel = reactionClassLabel(s, i, mElectron);
 
                 for (size_t kp = 0; kp < np; kp++) {
                     size_t kkp = m_prod[i][kp];
-                    string revlabel = "";
-                    for (size_t j = 0; j < np; j++) {
-                        if (j != kp) {
-                            revlabel += " + "+ s.kineticsSpeciesName(m_prod[i][j]);
-                        }
-                    }
-                    if (ba::starts_with(s.reaction(i)->type(), "three-body")) {
-                        revlabel += " + M ";
-                    } else if (ba::starts_with(s.reaction(i)->type(), "falloff")) {
-                        revlabel += " (+ M)";
-                    }
 
                     // calculate the flow only for pairs that are not the same
                     // species, both contain atoms of element m, and both are
@@ -846,10 +1101,10 @@ int ReactionPathBuilder::build(Kinetics& s, const string& element,
                             }
                         }
                         if (fwd_incl) {
-                            r.linkNodes(kkr, kkp, int(i), fwd, fwdlabel);
+                            r.linkNodes(kkr, kkp, int(i), fwd, classLabel);
                         }
                         if (rev_incl) {
-                            r.linkNodes(kkp, kkr, -int(i), rev, revlabel);
+                            r.linkNodes(kkp, kkr, -int(i), rev, classLabel);
                         }
                     }
                 }
